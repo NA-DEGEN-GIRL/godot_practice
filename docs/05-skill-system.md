@@ -1,6 +1,6 @@
 # 05. 스킬 시스템
 
-이 문서는 스킬 프레임워크, 번개 스킬, 화염방사기 스킬의 구현을 설명합니다.
+이 문서는 스킬 프레임워크, 번개 스킬, 화염방사기 스킬, 순간이동 스킬의 구현을 설명합니다.
 
 ---
 
@@ -13,14 +13,14 @@
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
 
 # 각 스킬의 최대 쿨타임 (0이면 미구현 스킬)
-var skill_max_cooldowns: Array[float] = [1.0, 5.0, 0.0, 0.0]
-#                                        ⚡1초  🔥5초  미구현  미구현
+var skill_max_cooldowns: Array[float] = [1.0, 5.0, 10.0, 0.0]
+#                                        ⚡1초  🔥5초  💨10초  미구현
 ```
 
 **배열 인덱스 = 스킬 슬롯:**
 - `[0]` = 1번 키 (번개)
 - `[1]` = 2번 키 (화염방사기)
-- `[2]` = 3번 키 (미구현)
+- `[2]` = 3번 키 (순간이동)
 - `[3]` = 4번 키 (미구현)
 
 ### 쿨타임 감소 (매 물리 프레임)
@@ -42,7 +42,7 @@ elif event is InputEventKey:
         match event.keycode:
             KEY_1: _use_skill(0)          # 번개 (즉발형)
             KEY_2: _start_flamethrower()  # 화염 (홀드형 - 별도 처리)
-            KEY_3: _use_skill(2)
+            KEY_3: _cast_teleport()  # 순간이동 (별도 처리)
             KEY_4: _use_skill(3)
     elif not event.pressed:                # 키 뗌
         match event.keycode:
@@ -452,7 +452,234 @@ func stop() -> void:
 
 ---
 
-## 5. 사운드 루프 (화염방사기)
+## 5. 순간이동 스킬 (Skill 3)
+
+순간이동은 번개/화염과 달리 **적을 대상으로 하지 않는** 스킬입니다. 마우스 방향으로 일정 거리를 즉시 이동합니다.
+
+### 상태 머신
+
+```
+[대기] ──(3번 누름)──→ [방향 계산] → [목적지 검증] → [이동] → [쿨타임 10초]
+                                                                    │
+                                                                    ▼
+                                                                 [대기]
+```
+
+### 발동 (player.gd)
+
+```gdscript
+func _cast_teleport() -> void:
+    # 1. 쿨타임 체크
+    if skill_cooldowns[2] > 0.0:
+        return
+
+    # 2. 마우스 방향 계산
+    var ground_pos := _get_mouse_ground_pos()
+    var dir := ground_pos - global_position
+    dir.y = 0.0
+    if dir.length_squared() < 0.01:
+        return  # 마우스가 캐릭터 바로 위에 있으면 무시
+    dir = dir.normalized()
+
+    # 3. 목적지 계산
+    var dest := global_position + dir * TELEPORT_DISTANCE  # 5.0 거리
+    dest.y = 0.0
+
+    # 4. 맵 경계 클램핑
+    dest.x = clampf(dest.x, -9.5, 9.5)
+    dest.z = clampf(dest.z, -9.5, 9.5)
+
+    # 5. 장애물 충돌 체크 (겹침 방지)
+    dest = _find_clear_teleport_pos(dest)
+
+    # 6. 쿨타임 시작
+    skill_cooldowns[2] = skill_max_cooldowns[2]  # 10초
+
+    # 7. 효과음 + 출발 이펙트
+    _sfx_teleport.play()
+    var depart_fx := _teleport_scene.instantiate()
+    depart_fx.global_position = global_position + Vector3(0, 0.5, 0)
+    get_tree().current_scene.add_child(depart_fx)
+
+    # 8. 실제 순간이동
+    global_position = dest
+    _target = dest
+    _moving = false
+    _attack_target = null
+    velocity = Vector3.ZERO
+
+    # 9. 도착 이펙트
+    var arrive_fx := _teleport_scene.instantiate()
+    arrive_fx.global_position = dest + Vector3(0, 0.5, 0)
+    get_tree().current_scene.add_child(arrive_fx)
+
+    # 10. 카메라 흔들림
+    var camera := get_viewport().get_camera_3d()
+    if camera and camera.has_method("shake"):
+        camera.shake(0.25, 0.15)
+```
+
+**번개/화염과의 차이:**
+- 적 대상 X → 마우스 방향으로 발동
+- `_use_skill()` 프레임워크 사용 X → 별도 함수 `_cast_teleport()`
+- 출발점 + 도착점 양쪽에 이펙트 생성
+
+### 목적지 충돌 체크 (_find_clear_teleport_pos)
+
+순간이동 도착 지점에 장애물이 있으면 캐릭터가 끼일 수 있습니다. 이를 방지하기 위해 `intersect_shape`로 도착 지점을 검증합니다.
+
+```gdscript
+func _find_clear_teleport_pos(target: Vector3) -> Vector3:
+    var space := get_world_3d().direct_space_state
+    var shape := SphereShape3D.new()
+    shape.radius = 0.5
+
+    var params := PhysicsShapeQueryParameters3D.new()
+    params.shape = shape
+    params.transform = Transform3D(Basis.IDENTITY, target + Vector3(0, 1, 0))
+    params.exclude = [get_rid()]        # 자기 자신 제외
+    params.collide_with_areas = false   # Area3D 무시
+
+    # 충돌 체크 후 바닥(Ground) 필터링
+    var hits := space.intersect_shape(params, 8)
+    hits = hits.filter(func(h):
+        return h.collider != null and not (
+            h.collider is StaticBody3D and h.collider.name == "Ground"
+        )
+    )
+
+    if hits.is_empty():
+        return target  # 장애물 없음 → 그대로 이동
+
+    # 장애물 있음 → 더 짧은 거리 시도
+    var dir := (target - global_position).normalized()
+    for step in range(4, 0, -1):
+        var test_pos := global_position + dir * (TELEPORT_DISTANCE * step / 5.0)
+        # ... 같은 충돌 체크 반복 ...
+        if hits.is_empty():
+            return test_pos
+
+    # 모든 위치가 막힘 → 제자리 (스킬 쿨타임만 소모)
+    return global_position
+```
+
+**`intersect_shape` vs `intersect_ray`:**
+- `intersect_ray`: 직선으로 물체를 "뚫고" 지나가는지 확인 (레이캐스트)
+- `intersect_shape`: 특정 모양(구, 캡슐 등)이 다른 물체와 **겹치는지** 확인
+- 순간이동은 "도착 지점에 공간이 있는가"를 확인해야 하므로 `intersect_shape`가 적합
+
+**바닥 필터링이 필요한 이유:**
+- 모든 물리 오브젝트가 collision_layer 1에 있음
+- `intersect_shape`는 바닥(Ground)도 감지
+- 바닥은 통과 가능한 표면이므로 수동으로 필터링
+
+**폴백 전략 (거리 축소):**
+```
+목적지(5.0) 충돌 → 거리 4.0 시도 → 거리 3.0 시도 → 거리 2.0 시도 → 거리 1.0 시도
+모두 실패하면 → 제자리 (쿨타임만 소모)
+```
+
+### 이펙트 (teleport_effect.gd)
+
+순간이동 이펙트는 파티클 폭발 + 빛 플래시로 구성됩니다.
+
+```gdscript
+func _ready() -> void:
+    _setup_particles()  # 파란/보라 파티클 폭발
+    _setup_light()      # OmniLight3D 플래시
+
+    # 1초 후 자동 삭제
+    var tween := create_tween()
+    tween.tween_interval(1.0)
+    tween.tween_callback(queue_free)
+```
+
+#### 파티클 (원샷 폭발)
+
+```gdscript
+func _setup_particles() -> void:
+    var particles := GPUParticles3D.new()
+    particles.amount = 32
+    particles.lifetime = 0.6
+    particles.one_shot = true        # 한 번만 발사
+    particles.explosiveness = 1.0    # 모든 파티클 동시 발사
+
+    var mat := ParticleProcessMaterial.new()
+    mat.direction = Vector3(0, 1, 0)     # 위쪽으로
+    mat.spread = 180.0                    # 전방향 (구형 폭발)
+    mat.initial_velocity_min = 3.0
+    mat.initial_velocity_max = 5.0
+    mat.gravity = Vector3(0, -2.0, 0)    # 자연스럽게 떨어짐
+    mat.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+    mat.emission_sphere_radius = 0.3
+```
+
+**`one_shot = true` + `explosiveness = 1.0`:**
+- `one_shot`: 파티클을 한 번만 생성 (반복 X)
+- `explosiveness = 1.0`: 모든 파티클을 동시에 발사 (0.0이면 lifetime 동안 분산 발사)
+- 조합하면 "폭발" 효과 완성
+
+#### 색상 그라데이션 (파란색 → 보라색 → 투명)
+
+```gdscript
+    gradient.colors = PackedColorArray([
+        Color(0.5, 0.7, 1.0, 0.9),   # 시작: 밝은 파랑
+        Color(0.6, 0.4, 1.0, 0.6),   # 중간: 보라
+        Color(0.3, 0.2, 0.8, 0.0)    # 끝: 어두운 보라, 투명
+    ])
+```
+
+#### 빛 플래시 (OmniLight3D)
+
+```gdscript
+func _setup_light() -> void:
+    var light := OmniLight3D.new()
+    light.light_color = Color(0.5, 0.4, 1.0)  # 보라빛
+    light.light_energy = 5.0                    # 강한 밝기
+    light.omni_range = 4.0
+
+    # 빠르게 페이드아웃
+    var tween := create_tween()
+    tween.tween_property(light, "light_energy", 0.0, 0.4)
+```
+
+### 카메라 흔들림 (camera_follow.gd)
+
+```gdscript
+var _shake_time: float = 0.0
+var _shake_duration: float = 0.0
+var _shake_intensity: float = 0.0
+
+func shake(duration: float, intensity: float) -> void:
+    _shake_duration = duration
+    _shake_intensity = intensity
+    _shake_time = 0.0
+
+func _process(delta: float) -> void:
+    # ... 기존 카메라 추적 코드 ...
+
+    if _shake_time < _shake_duration:
+        _shake_time += delta
+        var decay := 1.0 - (_shake_time / _shake_duration)  # 1.0 → 0.0 감쇠
+        global_position += Vector3(
+            randf_range(-1.0, 1.0) * _shake_intensity * decay,
+            randf_range(-1.0, 1.0) * _shake_intensity * decay * 0.5,
+            randf_range(-1.0, 1.0) * _shake_intensity * decay
+        )
+```
+
+**감쇠(decay)의 역할:**
+```
+시작: decay = 1.0 → 흔들림 100%   ████████████
+중간: decay = 0.5 → 흔들림 50%    ██████
+끝:   decay = 0.0 → 흔들림 0%     (정지)
+```
+
+Y축 흔들림은 `* 0.5`로 절반만 적용합니다. 수직 흔들림이 과하면 부자연스럽기 때문입니다.
+
+---
+
+## 6. 사운드 루프 (화염방사기)
 
 ```gdscript
 # _ready에서 연결
@@ -465,6 +692,20 @@ func _on_fire_sfx_finished() -> void:
 ```
 
 WAV 파일의 루프 설정 대신, `finished` 시그널로 사운드를 반복합니다. 이 방식이 더 안전합니다 (WAV 압축 포맷에 따라 루프 설정이 호환되지 않을 수 있음).
+
+---
+
+## 7. 스킬별 비교 요약
+
+| 항목 | 번개 (1) | 화염방사기 (2) | 순간이동 (3) |
+|------|----------|---------------|-------------|
+| **타입** | 즉발형 | 지속형 (홀드) | 즉발형 |
+| **대상** | 적 지정 | 범위 (Area3D) | 방향 지정 |
+| **쿨타임** | 1초 | 5초 | 10초 |
+| **데미지** | 40 (크리티컬 가능) | 15/초 (틱) | 없음 |
+| **이펙트** | ImmediateMesh 지그재그 | GPUParticles3D 지속 | GPUParticles3D 원샷 폭발 |
+| **사운드** | 즉시 재생 | finished 시그널 루프 | 즉시 재생 |
+| **특수** | 크로스 리본 메시 | 방향 추적, 최대 시간 | 충돌 체크, 카메라 흔들림 |
 
 ---
 
