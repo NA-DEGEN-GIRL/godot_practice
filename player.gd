@@ -48,6 +48,7 @@ func _ready() -> void:
 	add_child(_sfx_lightning)
 	_sfx_fire = AudioStreamPlayer.new()
 	_sfx_fire.stream = preload("res://sounds/fire_storm_001.wav")
+	_sfx_fire.finished.connect(_on_fire_sfx_finished)
 	add_child(_sfx_fire)
 	_create_hp_bar()
 
@@ -214,6 +215,11 @@ func _start_flamethrower() -> void:
 	_flamethrower_effect = _flamethrower_scene.instantiate()
 	_flamethrower_effect.position = Vector3(0, 1, 0)
 	add_child(_flamethrower_effect)
+
+
+func _on_fire_sfx_finished() -> void:
+	if _flamethrower_active:
+		_sfx_fire.play()
 
 
 func _stop_flamethrower() -> void:
