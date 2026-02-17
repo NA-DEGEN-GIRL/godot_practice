@@ -19,7 +19,7 @@ var _mouse_held: bool = false
 
 # Skill system (exposed for skill_bar to read)
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
-var skill_max_cooldowns: Array[float] = [1.0, 5.0, 0.0, 0.0]
+var skill_max_cooldowns: Array[float] = [1.0, 5.0, 10.0, 0.0]
 
 var current_hp: float
 var current_sp: float
@@ -33,8 +33,11 @@ var _flamethrower_active: bool = false
 var _flamethrower_time: float = 0.0
 var _flamethrower_effect: Node3D = null
 const FLAMETHROWER_MAX_DURATION := 5.0
+var _teleport_scene: PackedScene
+const TELEPORT_DISTANCE := 5.0
 var _sfx_lightning: AudioStreamPlayer
 var _sfx_fire: AudioStreamPlayer
+var _sfx_teleport: AudioStreamPlayer
 
 
 func _ready() -> void:
@@ -50,6 +53,10 @@ func _ready() -> void:
 	_sfx_fire.stream = preload("res://sounds/fire_storm_001.wav")
 	_sfx_fire.finished.connect(_on_fire_sfx_finished)
 	add_child(_sfx_fire)
+	_sfx_teleport = AudioStreamPlayer.new()
+	_sfx_teleport.stream = preload("res://sounds/fast_teleportation_001.wav")
+	add_child(_sfx_teleport)
+	_teleport_scene = preload("res://teleport_effect.tscn")
 	_create_hp_bar()
 
 
@@ -118,7 +125,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			match event.keycode:
 				KEY_1: _use_skill(0)
 				KEY_2: _start_flamethrower()
-				KEY_3: _use_skill(2)
+				KEY_3: _cast_teleport()
 				KEY_4: _use_skill(3)
 		elif not event.pressed:
 			match event.keycode:
@@ -258,6 +265,83 @@ func _get_mouse_ground_pos() -> Vector3:
 		var t := -from.y / dir.y
 		if t > 0.0:
 			return from + dir * t
+	return global_position
+
+
+func _cast_teleport() -> void:
+	if skill_cooldowns[2] > 0.0:
+		return
+	var ground_pos := _get_mouse_ground_pos()
+	var dir := ground_pos - global_position
+	dir.y = 0.0
+	if dir.length_squared() < 0.01:
+		return
+	dir = dir.normalized()
+
+	var dest := global_position + dir * TELEPORT_DISTANCE
+	dest.y = 0.0
+
+	# Clamp to map bounds
+	dest.x = clampf(dest.x, -9.5, 9.5)
+	dest.z = clampf(dest.z, -9.5, 9.5)
+
+	# Check if destination is clear of other objects
+	dest = _find_clear_teleport_pos(dest)
+
+	# Start cooldown
+	skill_cooldowns[2] = skill_max_cooldowns[2]
+
+	# Sound + departure effect
+	_sfx_teleport.play()
+	var depart_fx := _teleport_scene.instantiate()
+	depart_fx.global_position = global_position + Vector3(0, 0.5, 0)
+	get_tree().current_scene.add_child(depart_fx)
+
+	# Teleport
+	global_position = dest
+	_target = dest
+	_moving = false
+	_attack_target = null
+	velocity = Vector3.ZERO
+
+	# Spawn arrival effect
+	var arrive_fx := _teleport_scene.instantiate()
+	arrive_fx.global_position = dest + Vector3(0, 0.5, 0)
+	get_tree().current_scene.add_child(arrive_fx)
+
+	# Camera shake
+	var camera := get_viewport().get_camera_3d()
+	if camera and camera.has_method("shake"):
+		camera.shake(0.25, 0.15)
+
+
+func _find_clear_teleport_pos(target: Vector3) -> Vector3:
+	var space := get_world_3d().direct_space_state
+	var shape := SphereShape3D.new()
+	shape.radius = 0.5
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = shape
+	params.transform = Transform3D(Basis.IDENTITY, target + Vector3(0, 1, 0))
+	params.exclude = [get_rid()]
+	params.collide_with_areas = false
+	# Exclude ground by checking results manually
+	var hits := space.intersect_shape(params, 8)
+	hits = hits.filter(func(h): return h.collider != null and not (h.collider is StaticBody3D and h.collider.name == "Ground"))
+	if hits.is_empty():
+		return target
+	# Try slightly shorter distances
+	var dir := (target - global_position).normalized()
+	for step in range(4, 0, -1):
+		var test_pos := global_position + dir * (TELEPORT_DISTANCE * step / 5.0)
+		test_pos.y = 0.0
+		test_pos.x = clampf(test_pos.x, -9.5, 9.5)
+		test_pos.z = clampf(test_pos.z, -9.5, 9.5)
+		params.transform = Transform3D(Basis.IDENTITY, test_pos + Vector3(0, 1, 0))
+		hits = space.intersect_shape(params, 8)
+		hits = hits.filter(func(h): return h.collider != null and not (h.collider is StaticBody3D and h.collider.name == "Ground"))
+		if hits.is_empty():
+			return test_pos
+	# All positions blocked, return original position (skill is consumed)
 	return global_position
 
 

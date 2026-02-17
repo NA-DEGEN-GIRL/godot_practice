@@ -4,7 +4,7 @@ const SLOT_SIZE := 64
 const GAP := 6
 const MARGIN := 20
 const BORDER := 2
-const ICONS := ["⚡", "🔥", "", ""]
+const ICONS := ["⚡", "🔥", "💨", ""]
 
 const GAUGE_W := 200
 const GAUGE_H := 22
