@@ -56,6 +56,8 @@ godot-test/
 │   ├── fire_storm_001.wav
 │   └── fast_teleportation_001.wav
 ├── addons/godot_mcp/        # Godot MCP 에디터 애드온
+├── models/                  # AI 생성 3D 모델 (.glb 등)
+├── .mcp.json                # MCP 서버 설정 파일
 └── docs/                    # 학습 문서 (아래 참고)
 ```
 
@@ -71,6 +73,39 @@ godot-test/
 6. **[UI와 HUD](docs/06-ui-and-hud.md)** - 스킬바, 게이지, 데미지 숫자
 7. **[이펙트와 렌더링](docs/07-effects-and-rendering.md)** - 파티클, ImmediateMesh, 머티리얼
 8. **[오디오](docs/08-audio.md)** - 사운드 재생과 루프
+9. **[MCP와 AI 에셋 파이프라인](docs/09-mcp-ai-pipeline.md)** - MCP 서버 구성과 AI 기반 에셋 생성
+
+## MCP 서버 및 AI 에셋 파이프라인
+
+이 프로젝트는 **MCP (Model Context Protocol)** 를 통해 AI가 게임 개발의 다양한 단계를 직접 지원합니다. `.mcp.json`에 4개의 MCP 서버가 설정되어 있습니다.
+
+### 사용 중인 MCP 서버
+
+| MCP 서버 | 패키지 | 역할 |
+|----------|--------|------|
+| **godot-mcp** | `@satelliteoflove/godot-mcp` | Godot 에디터 제어 (씬/노드 편집, 프로젝트 실행, 스크린샷 등) |
+| **game-asset-gen** | `mcp-game-asset-gen` | 2D 이미지/텍스처/캐릭터 시트/픽셀아트 생성 (Gemini AI) |
+| **meshy-ai** | `meshy-ai-mcp-server` | 2D 이미지를 3D 모델로 변환, 텍스처링, 리메시 |
+| **ElevenLabs** | `elevenlabs-mcp` | TTS 음성/사운드 생성 |
+
+### AI 에셋 파이프라인 흐름
+
+```
+[텍스트 프롬프트]
+      │
+      ▼
+ game-asset-gen ──→ 2D 이미지 (캐릭터, 텍스처, 픽셀아트)
+      │
+      ▼
+  meshy-ai ──→ 3D 모델 (.glb) + 텍스처링 + 리메시
+      │
+      ▼
+  godot-mcp ──→ Godot 씬에 배치, 스크립트 연결, 테스트 실행
+      │
+ ElevenLabs ──→ 음성/효과음 생성 (.mp3)
+```
+
+자세한 내용은 **[MCP와 AI 에셋 파이프라인](docs/09-mcp-ai-pipeline.md)** 문서를 참고하세요.
 
 ## 기술 스택
 
@@ -78,3 +113,4 @@ godot-test/
 - **물리**: Jolt Physics
 - **언어**: GDScript
 - **에디터 연동**: Godot MCP (Model Context Protocol)
+- **AI 에셋 생성**: game-asset-gen (Gemini), meshy-ai (3D 변환), ElevenLabs (음성)
