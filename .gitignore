@@ -1,0 +1,14 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+/builds/
+
+# Godot MCP local config
+.mcp.json
+
+# Claude Code
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db

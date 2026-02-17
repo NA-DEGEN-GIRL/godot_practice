@@ -1,0 +1,307 @@
+extends CharacterBody3D
+
+@export var move_speed: float = 5.0
+@export var push_force: float = 3.0
+@export var attack_range: float = 2.0
+@export var attack_damage: float = 25.0
+@export var attack_cooldown: float = 0.5
+@export var skill_range: float = 6.0
+@export var max_hp: float = 200.0
+@export var max_sp: float = 100.0
+@export var crit_chance: float = 0.2
+@export var crit_multiplier: float = 2.0
+
+var _target: Vector3
+var _moving: bool = false
+var _attack_target: Node3D = null
+var _attack_timer: float = 0.0
+var _mouse_held: bool = false
+
+# Skill system (exposed for skill_bar to read)
+var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var skill_max_cooldowns: Array[float] = [1.0, 5.0, 0.0, 0.0]
+
+var current_hp: float
+var current_sp: float
+var _hp_bar_node: Node3D
+var _hp_fill_mesh: MeshInstance3D
+var _hp_label_3d: Label3D
+
+var _lightning_scene: PackedScene
+var _flamethrower_scene: PackedScene
+var _flamethrower_active: bool = false
+var _flamethrower_time: float = 0.0
+var _flamethrower_effect: Node3D = null
+const FLAMETHROWER_MAX_DURATION := 5.0
+var _sfx_lightning: AudioStreamPlayer
+var _sfx_fire: AudioStreamPlayer
+
+
+func _ready() -> void:
+	_target = global_position
+	current_hp = max_hp
+	current_sp = max_sp
+	_lightning_scene = preload("res://lightning_effect.tscn")
+	_flamethrower_scene = preload("res://flamethrower_effect.tscn")
+	_sfx_lightning = AudioStreamPlayer.new()
+	_sfx_lightning.stream = preload("res://sounds/lightening_bolt_001.wav")
+	add_child(_sfx_lightning)
+	_sfx_fire = AudioStreamPlayer.new()
+	_sfx_fire.stream = preload("res://sounds/fire_storm_001.wav")
+	add_child(_sfx_fire)
+	_create_hp_bar()
+
+
+func _process(_delta: float) -> void:
+	var camera := get_viewport().get_camera_3d()
+	if camera and _hp_bar_node:
+		_hp_bar_node.global_rotation = camera.global_rotation
+
+
+func _create_hp_bar() -> void:
+	_hp_bar_node = Node3D.new()
+	_hp_bar_node.position = Vector3(0, 2.3, 0)
+	add_child(_hp_bar_node)
+	var bar_mesh := BoxMesh.new()
+	bar_mesh.size = Vector3(1, 0.1, 0.02)
+	var bg := MeshInstance3D.new()
+	bg.mesh = bar_mesh
+	var bg_mat := StandardMaterial3D.new()
+	bg_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bg_mat.albedo_color = Color(0.2, 0.2, 0.2, 1)
+	bg.material_override = bg_mat
+	_hp_bar_node.add_child(bg)
+	_hp_fill_mesh = MeshInstance3D.new()
+	_hp_fill_mesh.mesh = bar_mesh
+	_hp_fill_mesh.position.z = 0.011
+	var fill_mat := StandardMaterial3D.new()
+	fill_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fill_mat.albedo_color = Color(0.1, 0.8, 0.1, 1)
+	_hp_fill_mesh.material_override = fill_mat
+	_hp_bar_node.add_child(_hp_fill_mesh)
+	_hp_label_3d = Label3D.new()
+	_hp_label_3d.font_size = 16
+	_hp_label_3d.pixel_size = 0.005
+	_hp_label_3d.position = Vector3(0, 0.12, 0.02)
+	_hp_label_3d.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_hp_label_3d.no_depth_test = true
+	_hp_label_3d.outline_size = 4
+	_hp_label_3d.outline_modulate = Color(0, 0, 0, 0.8)
+	_hp_label_3d.modulate = Color(1, 1, 1, 0.9)
+	_hp_bar_node.add_child(_hp_label_3d)
+	_update_player_hp_bar()
+
+
+func _update_player_hp_bar() -> void:
+	var ratio := clampf(current_hp / max_hp, 0.0, 1.0)
+	_hp_fill_mesh.scale.x = ratio
+	_hp_fill_mesh.position.x = (ratio - 1.0) * 0.5
+	if _hp_label_3d:
+		_hp_label_3d.text = "%d / %d" % [ceili(maxf(current_hp, 0.0)), int(max_hp)]
+
+
+func take_damage(amount: float) -> void:
+	current_hp = maxf(current_hp - amount, 0.0)
+	_update_player_hp_bar()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_mouse_held = event.pressed
+		if event.pressed:
+			_handle_click(event.position)
+	elif event is InputEventMouseMotion and _mouse_held:
+		_handle_drag(event.position)
+	elif event is InputEventKey:
+		if event.pressed and not event.echo:
+			match event.keycode:
+				KEY_1: _use_skill(0)
+				KEY_2: _start_flamethrower()
+				KEY_3: _use_skill(2)
+				KEY_4: _use_skill(3)
+		elif not event.pressed:
+			match event.keycode:
+				KEY_2: _stop_flamethrower()
+
+
+func _handle_click(screen_pos: Vector2) -> void:
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+	var from := camera.project_ray_origin(screen_pos)
+	var dir := camera.project_ray_normal(screen_pos)
+
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 100.0)
+	query.exclude = [get_rid()]
+	var result := space.intersect_ray(query)
+
+	if result and result.collider.is_in_group("enemy"):
+		_attack_target = result.collider
+		_target = _attack_target.global_position
+		_moving = true
+	else:
+		_attack_target = null
+		_move_to_ground(from, dir)
+
+
+func _handle_drag(screen_pos: Vector2) -> void:
+	_attack_target = null
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+	var from := camera.project_ray_origin(screen_pos)
+	var dir := camera.project_ray_normal(screen_pos)
+	_move_to_ground(from, dir)
+
+
+func _move_to_ground(from: Vector3, dir: Vector3) -> void:
+	if abs(dir.y) > 0.001:
+		var t := -from.y / dir.y
+		if t > 0.0:
+			var hit := from + dir * t
+			_target = Vector3(hit.x, 0.0, hit.z)
+			_moving = true
+
+
+func _use_skill(index: int) -> void:
+	if skill_cooldowns[index] > 0.0 or skill_max_cooldowns[index] <= 0.0:
+		return
+
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+
+	var mouse_pos := get_viewport().get_mouse_position()
+	var from := camera.project_ray_origin(mouse_pos)
+	var dir := camera.project_ray_normal(mouse_pos)
+
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, from + dir * 100.0)
+	query.exclude = [get_rid()]
+	var result := space.intersect_ray(query)
+
+	if not result or not result.collider.is_in_group("enemy"):
+		return
+	var enemy: Node3D = result.collider
+	if not enemy.visible:
+		return
+	if global_position.distance_to(enemy.global_position) > skill_range:
+		return
+
+	skill_cooldowns[index] = skill_max_cooldowns[index]
+
+	match index:
+		0: _cast_lightning(enemy)
+
+
+func _cast_lightning(enemy: Node3D) -> void:
+	var is_crit := randf() < crit_chance
+	var dmg := 40.0 * (crit_multiplier if is_crit else 1.0)
+	enemy.take_damage(dmg, is_crit)
+	_sfx_lightning.play()
+	var effect := _lightning_scene.instantiate()
+	effect.global_position = enemy.global_position
+	get_tree().current_scene.add_child(effect)
+
+
+func _start_flamethrower() -> void:
+	if skill_cooldowns[1] > 0.0 or _flamethrower_active:
+		return
+	_flamethrower_active = true
+	_flamethrower_time = 0.0
+	_sfx_fire.play()
+	_flamethrower_effect = _flamethrower_scene.instantiate()
+	_flamethrower_effect.position = Vector3(0, 1, 0)
+	add_child(_flamethrower_effect)
+
+
+func _stop_flamethrower() -> void:
+	if not _flamethrower_active:
+		return
+	_flamethrower_active = false
+	_sfx_fire.stop()
+	if _flamethrower_effect and is_instance_valid(_flamethrower_effect):
+		_flamethrower_effect.stop()
+		_flamethrower_effect = null
+	skill_cooldowns[1] = skill_max_cooldowns[1]
+
+
+func _update_flamethrower(delta: float) -> void:
+	if not _flamethrower_active or not _flamethrower_effect:
+		return
+	_flamethrower_time += delta
+	if _flamethrower_time >= FLAMETHROWER_MAX_DURATION:
+		_stop_flamethrower()
+		return
+	var ground_pos := _get_mouse_ground_pos()
+	var dir := ground_pos - global_position
+	dir.y = 0.0
+	if dir.length_squared() > 0.01:
+		_flamethrower_effect.rotation.y = atan2(-dir.x, -dir.z)
+
+
+func _get_mouse_ground_pos() -> Vector3:
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return global_position
+	var mouse_pos := get_viewport().get_mouse_position()
+	var from := camera.project_ray_origin(mouse_pos)
+	var dir := camera.project_ray_normal(mouse_pos)
+	if abs(dir.y) > 0.001:
+		var t := -from.y / dir.y
+		if t > 0.0:
+			return from + dir * t
+	return global_position
+
+
+func _physics_process(delta: float) -> void:
+	_attack_timer -= delta
+	_update_flamethrower(delta)
+
+	for i in skill_cooldowns.size():
+		if skill_cooldowns[i] > 0.0:
+			skill_cooldowns[i] = maxf(skill_cooldowns[i] - delta, 0.0)
+
+	# Handle attack target
+	if _attack_target:
+		if not is_instance_valid(_attack_target) or not _attack_target.visible:
+			_attack_target = null
+		else:
+			var dist := global_position.distance_to(_attack_target.global_position)
+			if dist <= attack_range:
+				_moving = false
+				velocity = Vector3.ZERO
+				if _attack_timer <= 0.0:
+					var is_crit := randf() < crit_chance
+					var dmg := attack_damage * (crit_multiplier if is_crit else 1.0)
+					_attack_target.take_damage(dmg, is_crit)
+					_attack_timer = attack_cooldown
+					_attack_target = null
+				return
+			else:
+				_target = _attack_target.global_position
+
+	if not _moving:
+		velocity = Vector3.ZERO
+		return
+
+	var diff := _target - global_position
+	diff.y = 0.0
+	if diff.length() < 0.1:
+		_moving = false
+		velocity = Vector3.ZERO
+		return
+
+	velocity = diff.normalized() * move_speed
+	move_and_slide()
+	global_position.x = clampf(global_position.x, -9.5, 9.5)
+	global_position.z = clampf(global_position.z, -9.5, 9.5)
+
+	for i in get_slide_collision_count():
+		var collision := get_slide_collision(i)
+		var collider := collision.get_collider()
+		if collider is RigidBody3D:
+			var push_dir := -collision.get_normal()
+			push_dir.y = 0.0
+			collider.apply_central_impulse(push_dir * push_force)

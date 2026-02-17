@@ -1,0 +1,45 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://enemy.gd" id="1"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_enemy"]
+albedo_color = Color(0.6, 0.15, 0.15, 1)
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape_1"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_bar"]
+size = Vector3(1, 0.1, 0.02)
+
+[sub_resource type="StandardMaterial3D" id="Mat_bar_bg"]
+shading_mode = 0
+albedo_color = Color(0.2, 0.2, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_bar_fill"]
+shading_mode = 0
+albedo_color = Color(0.1, 0.8, 0.1, 1)
+
+[node name="Enemy" type="StaticBody3D"]
+script = ExtResource("1")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("CapsuleMesh_1")
+surface_material_override/0 = SubResource("Mat_enemy")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("CapsuleShape_1")
+
+[node name="HPBar" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
+
+[node name="Background" type="MeshInstance3D" parent="HPBar"]
+mesh = SubResource("BoxMesh_bar")
+surface_material_override/0 = SubResource("Mat_bar_bg")
+
+[node name="Fill" type="MeshInstance3D" parent="HPBar"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.011)
+mesh = SubResource("BoxMesh_bar")
+surface_material_override/0 = SubResource("Mat_bar_fill")
