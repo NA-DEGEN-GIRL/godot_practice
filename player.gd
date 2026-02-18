@@ -19,6 +19,8 @@ var _attack_timer: float = 0.0
 var _mouse_held: bool = false
 var _running: bool = false
 var _anim_player: AnimationPlayer
+var is_dead: bool = false
+var _facing_angle: float = 0.0
 
 # Skill system (exposed for skill_bar to read)
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
@@ -42,6 +44,22 @@ var _sfx_lightning: AudioStreamPlayer
 var _sfx_fire: AudioStreamPlayer
 var _sfx_teleport: AudioStreamPlayer
 
+# Inventory system
+var inventory: Array[String] = ["", "", "", "", "", "", "", ""]
+var equipped_right_hand: String = ""
+var inventory_open: bool = false
+var _pistol_scene: PackedScene
+var _right_hand_attachment: BoneAttachment3D
+var _equipped_model: Node3D
+
+# Pistol shooting
+var pistol_ammo: int = 0
+const PISTOL_MAX_AMMO := 8
+const PISTOL_DAMAGE := 35.0
+const PISTOL_FIRE_RATE := 0.4
+var _pistol_cooldown: float = 0.0
+var _sfx_gunshot: AudioStreamPlayer
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -61,6 +79,10 @@ func _ready() -> void:
 	_sfx_teleport.stream = preload("res://sounds/fast_teleportation_001.wav")
 	add_child(_sfx_teleport)
 	_teleport_scene = preload("res://teleport_effect.tscn")
+	_pistol_scene = preload("res://models/pistol.glb")
+	_sfx_gunshot = AudioStreamPlayer.new()
+	_sfx_gunshot.stream = preload("res://sounds/gunshot.wav")
+	add_child(_sfx_gunshot)
 	_create_hp_bar()
 	var model := get_node_or_null("CharacterModel")
 	if model:
@@ -116,16 +138,56 @@ func _update_player_hp_bar() -> void:
 
 
 func take_damage(amount: float) -> void:
+	if is_dead:
+		return
 	current_hp = maxf(current_hp - amount, 0.0)
 	_update_player_hp_bar()
+	_spawn_damage_number(amount)
+	if current_hp <= 0.0:
+		_die()
+
+
+func _spawn_damage_number(amount: float) -> void:
+	var node := Node3D.new()
+	node.global_position = global_position + Vector3(randf_range(-0.3, 0.3), 2.5, randf_range(-0.3, 0.3))
+	var label := Label3D.new()
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.render_priority = 10
+	label.outline_size = 8
+	label.outline_modulate = Color(0, 0, 0, 0.8)
+	label.text = str(int(amount))
+	label.font_size = 28
+	label.modulate = Color(0.3, 1.0, 0.1, 1.0)  # green poison color
+	node.add_child(label)
+	get_tree().current_scene.add_child(node)
+	var tween := node.create_tween()
+	tween.tween_property(node, "position:y", node.position.y + 1.5, 0.8).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8).set_delay(0.3)
+	tween.tween_callback(node.queue_free)
+
+
+func _die() -> void:
+	is_dead = true
+	_moving = false
+	_mouse_held = false
+	velocity = Vector3.ZERO
+	_stop_flamethrower()
+	_play_anim("")
+	get_tree().call_group("game_ui", "show_game_over")
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if is_dead or inventory_open:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		_mouse_held = event.pressed
 		_running = Input.is_key_pressed(KEY_CTRL)
 		if event.pressed:
 			_handle_click(event.position)
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.pressed:
+			_shoot_pistol(event.position)
 	elif event is InputEventMouseMotion and _mouse_held:
 		_running = Input.is_key_pressed(KEY_CTRL)
 		_handle_drag(event.position)
@@ -153,13 +215,20 @@ func _handle_click(screen_pos: Vector2) -> void:
 	query.exclude = [get_rid()]
 	var result := space.intersect_ray(query)
 
-	if result and result.collider.is_in_group("enemy"):
-		_attack_target = result.collider
-		_target = _attack_target.global_position
-		_moving = true
-	else:
-		_attack_target = null
-		_move_to_ground(from, dir)
+	if result:
+		if result.collider.is_in_group("enemy"):
+			_attack_target = result.collider
+			_target = _attack_target.global_position
+			_moving = true
+			return
+		elif result.collider.is_in_group("pickup_body"):
+			var pickup = result.collider.get_meta("pickup_owner", null)
+			if pickup and is_instance_valid(pickup) and global_position.distance_to(pickup.global_position) < 2.5:
+				_try_pickup(pickup)
+				return
+
+	_attack_target = null
+	_move_to_ground(from, dir)
 
 
 func _handle_drag(screen_pos: Vector2) -> void:
@@ -230,6 +299,7 @@ func _start_flamethrower() -> void:
 	_sfx_fire.play()
 	_flamethrower_effect = _flamethrower_scene.instantiate()
 	_flamethrower_effect.position = Vector3(0, 1, 0)
+	_flamethrower_effect.rotation.y = _facing_angle + PI
 	add_child(_flamethrower_effect)
 
 
@@ -256,11 +326,8 @@ func _update_flamethrower(delta: float) -> void:
 	if _flamethrower_time >= FLAMETHROWER_MAX_DURATION:
 		_stop_flamethrower()
 		return
-	var ground_pos := _get_mouse_ground_pos()
-	var dir := ground_pos - global_position
-	dir.y = 0.0
-	if dir.length_squared() > 0.01:
-		_flamethrower_effect.rotation.y = atan2(-dir.x, -dir.z)
+	# Fire in the direction the character is facing
+	_flamethrower_effect.rotation.y = _facing_angle + PI
 
 
 func _get_mouse_ground_pos() -> Vector3:
@@ -355,12 +422,16 @@ func _find_clear_teleport_pos(target: Vector3) -> Vector3:
 
 
 func _physics_process(delta: float) -> void:
+	if is_dead:
+		return
 	_attack_timer -= delta
 	_update_flamethrower(delta)
 
 	for i in skill_cooldowns.size():
 		if skill_cooldowns[i] > 0.0:
 			skill_cooldowns[i] = maxf(skill_cooldowns[i] - delta, 0.0)
+	if _pistol_cooldown > 0.0:
+		_pistol_cooldown = maxf(_pistol_cooldown - delta, 0.0)
 
 	# Handle attack target
 	if _attack_target:
@@ -401,7 +472,8 @@ func _physics_process(delta: float) -> void:
 	# Rotate model to face movement direction
 	var model := get_node_or_null("CharacterModel")
 	if model:
-		model.rotation.y = atan2(velocity.x, velocity.z)
+		_facing_angle = atan2(velocity.x, velocity.z)
+		model.rotation.y = _facing_angle
 
 	move_and_slide()
 	global_position.x = clampf(global_position.x, -9.5, 9.5)
@@ -441,3 +513,378 @@ func _play_anim(anim_name: String) -> void:
 			_anim_player.speed_scale = 2.0
 		else:
 			_anim_player.speed_scale = 1.0
+
+
+func _try_pickup(pickup: Node) -> void:
+	for i in inventory.size():
+		if inventory[i] == "":
+			inventory[i] = pickup.item_id
+			if pickup.item_id == "pistol":
+				pistol_ammo = mini(pistol_ammo + 8, PISTOL_MAX_AMMO)
+			pickup.collect()
+			return
+
+
+func has_pistol() -> bool:
+	if equipped_right_hand == "pistol":
+		return true
+	for item in inventory:
+		if item == "pistol":
+			return true
+	return false
+
+
+func add_ammo(amount: int) -> void:
+	if not has_pistol():
+		return
+	var old_ammo := pistol_ammo
+	pistol_ammo = mini(pistol_ammo + amount, PISTOL_MAX_AMMO)
+	var added := pistol_ammo - old_ammo
+	if added > 0:
+		_spawn_heal_number_custom("+%d AMMO" % added, Color(1.0, 0.85, 0.2, 1.0))
+
+
+func equip_to_right_hand(item_id: String) -> void:
+	_clear_right_hand_model()
+	equipped_right_hand = item_id
+	if item_id == "pistol":
+		_attach_pistol_to_hand()
+
+
+func unequip_right_hand() -> String:
+	var item := equipped_right_hand
+	equipped_right_hand = ""
+	_clear_right_hand_model()
+	return item
+
+
+func _attach_pistol_to_hand() -> void:
+	var model := get_node_or_null("CharacterModel")
+	if not model:
+		return
+	# Attach pistol to the character model so it rotates with the character
+	_equipped_model = _pistol_scene.instantiate()
+	_equipped_model.scale = Vector3(0.5, 0.5, 0.5)
+	# Right hand area: right side offset, hand height, slightly forward
+	_equipped_model.position = Vector3(-0.5, 0.4, 0.15)
+	_equipped_model.rotation_degrees = Vector3(0, 90, 0)
+	model.add_child(_equipped_model)
+	PistolMaterial.apply(_equipped_model)
+
+
+func _clear_right_hand_model() -> void:
+	if _equipped_model and is_instance_valid(_equipped_model):
+		_equipped_model.queue_free()
+		_equipped_model = null
+	if _right_hand_attachment and is_instance_valid(_right_hand_attachment):
+		_right_hand_attachment.queue_free()
+		_right_hand_attachment = null
+
+
+func heal_hp(amount: float) -> void:
+	if is_dead:
+		return
+	var old_hp := current_hp
+	current_hp = minf(current_hp + amount, max_hp)
+	var healed := current_hp - old_hp
+	if healed > 0.0:
+		_update_player_hp_bar()
+		_spawn_heal_number(healed)
+
+
+func _spawn_heal_number(amount: float) -> void:
+	var node := Node3D.new()
+	node.global_position = global_position + Vector3(randf_range(-0.3, 0.3), 2.5, randf_range(-0.3, 0.3))
+	var label := Label3D.new()
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.render_priority = 10
+	label.outline_size = 8
+	label.outline_modulate = Color(0, 0, 0, 0.8)
+	label.text = "+%d" % int(amount)
+	label.font_size = 28
+	label.modulate = Color(0.2, 1.0, 0.3, 1.0)
+	node.add_child(label)
+	get_tree().current_scene.add_child(node)
+	var tween := node.create_tween()
+	tween.tween_property(node, "position:y", node.position.y + 1.5, 0.8).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8).set_delay(0.3)
+	tween.tween_callback(node.queue_free)
+
+
+func _spawn_heal_number_custom(text: String, color: Color) -> void:
+	var node := Node3D.new()
+	node.global_position = global_position + Vector3(randf_range(-0.3, 0.3), 2.5, randf_range(-0.3, 0.3))
+	var label := Label3D.new()
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.render_priority = 10
+	label.outline_size = 8
+	label.outline_modulate = Color(0, 0, 0, 0.8)
+	label.text = text
+	label.font_size = 24
+	label.modulate = color
+	node.add_child(label)
+	get_tree().current_scene.add_child(node)
+	var tween := node.create_tween()
+	tween.tween_property(node, "position:y", node.position.y + 1.5, 0.8).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8).set_delay(0.3)
+	tween.tween_callback(node.queue_free)
+
+
+func _shoot_pistol(screen_pos: Vector2) -> void:
+	if equipped_right_hand != "pistol" or pistol_ammo <= 0 or _pistol_cooldown > 0.0:
+		return
+
+	var camera := get_viewport().get_camera_3d()
+	if not camera:
+		return
+
+	var space := get_world_3d().direct_space_state
+
+	# Determine aim target: first raycast from camera to see if we clicked on an enemy
+	var cam_from := camera.project_ray_origin(screen_pos)
+	var cam_dir := camera.project_ray_normal(screen_pos)
+	var cam_query := PhysicsRayQueryParameters3D.create(cam_from, cam_from + cam_dir * 100.0)
+	cam_query.exclude = [get_rid()]
+	var cam_result := space.intersect_ray(cam_query)
+
+	var aim_point: Vector3
+	if cam_result and cam_result.collider.is_in_group("enemy"):
+		# Clicked on enemy -> aim directly at their ground position
+		aim_point = Vector3(cam_result.collider.global_position.x, 0, cam_result.collider.global_position.z)
+	else:
+		# No enemy clicked -> project to ground plane
+		if abs(cam_dir.y) > 0.001:
+			var t := -cam_from.y / cam_dir.y
+			if t > 0.0:
+				aim_point = cam_from + cam_dir * t
+			else:
+				aim_point = global_position
+		else:
+			aim_point = global_position
+
+	# Face aim direction
+	var aim_dir := aim_point - global_position
+	aim_dir.y = 0.0
+	if aim_dir.length_squared() > 0.001:
+		_facing_angle = atan2(aim_dir.x, aim_dir.z)
+		var char_model := get_node_or_null("CharacterModel")
+		if char_model:
+			char_model.rotation.y = _facing_angle
+
+	# Consume ammo and set cooldown
+	pistol_ammo -= 1
+	_pistol_cooldown = PISTOL_FIRE_RATE
+	_sfx_gunshot.play()
+
+	# Muzzle position (in front of character at chest height)
+	var muzzle_pos := global_position + Vector3(0, 0.8, 0)
+	var forward := Vector3(sin(_facing_angle), 0, cos(_facing_angle))
+	muzzle_pos += forward * 0.5
+
+	# Raycast from muzzle in aim direction
+	var shoot_dir := Vector3(forward.x, 0, forward.z).normalized()
+	var bullet_end := muzzle_pos + shoot_dir * 30.0
+	var query := PhysicsRayQueryParameters3D.create(muzzle_pos, bullet_end)
+	query.exclude = [get_rid()]
+	var result := space.intersect_ray(query)
+
+	# Determine hit point
+	var hit_point: Vector3
+	if result:
+		hit_point = result.position
+	else:
+		hit_point = bullet_end
+
+	# Spawn bullet tracer
+	_spawn_bullet_tracer(muzzle_pos, hit_point)
+	_spawn_muzzle_flash(muzzle_pos)
+
+	# Apply damage if enemy hit
+	if result and result.collider.is_in_group("enemy"):
+		var enemy: Node3D = result.collider
+		if enemy.has_method("take_damage"):
+			var is_crit := randf() < crit_chance
+			var dmg := PISTOL_DAMAGE * (crit_multiplier if is_crit else 1.0)
+			enemy.take_damage(dmg, is_crit)
+
+
+func _spawn_bullet_tracer(from_pos: Vector3, to_pos: Vector3) -> void:
+	# Glowing bullet head
+	var bullet := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.05
+	sphere.height = 0.1
+	bullet.mesh = sphere
+	var bullet_mat := StandardMaterial3D.new()
+	bullet_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bullet_mat.albedo_color = Color(1.0, 1.0, 0.7, 1.0)
+	bullet_mat.emission_enabled = true
+	bullet_mat.emission = Color(1.0, 0.9, 0.5)
+	bullet_mat.emission_energy_multiplier = 6.0
+	bullet.material_override = bullet_mat
+	bullet.global_position = from_pos
+	get_tree().current_scene.add_child(bullet)
+
+	# Trailing particles that follow the bullet
+	var trail := GPUParticles3D.new()
+	trail.amount = 20
+	trail.lifetime = 0.15
+	trail.emitting = true
+	var tmat := ParticleProcessMaterial.new()
+	tmat.direction = Vector3(0, 0, 0)
+	tmat.spread = 5.0
+	tmat.initial_velocity_min = 0.3
+	tmat.initial_velocity_max = 0.8
+	tmat.gravity = Vector3.ZERO
+	tmat.scale_min = 0.3
+	tmat.scale_max = 0.8
+	tmat.color = Color(1.0, 0.6, 0.1, 0.8)
+	trail.process_material = tmat
+	var tmesh := SphereMesh.new()
+	tmesh.radius = 0.03
+	tmesh.height = 0.06
+	trail.draw_pass_1 = tmesh
+	bullet.add_child(trail)
+
+	# Animate bullet to target
+	var dist := from_pos.distance_to(to_pos)
+	var flight_time := clampf(dist / 20.0, 0.15, 0.5)
+	var tween := bullet.create_tween()
+	tween.tween_property(bullet, "global_position", to_pos, flight_time).set_trans(Tween.TRANS_LINEAR)
+	tween.tween_callback(func():
+		_spawn_impact_sparks(to_pos)
+		# Let trail particles finish before removing
+		trail.emitting = false
+		bullet.visible = false
+		get_tree().create_timer(0.3).timeout.connect(bullet.queue_free)
+	)
+
+	# Streak line (fading laser trail)
+	var streak := MeshInstance3D.new()
+	var dir := (to_pos - from_pos).normalized()
+	var streak_len := minf(dist, 2.0)
+	var box := BoxMesh.new()
+	box.size = Vector3(0.02, 0.02, streak_len)
+	streak.mesh = box
+	var streak_mat := StandardMaterial3D.new()
+	streak_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	streak_mat.albedo_color = Color(1.0, 0.85, 0.3, 0.8)
+	streak_mat.emission_enabled = true
+	streak_mat.emission = Color(1.0, 0.7, 0.2)
+	streak_mat.emission_energy_multiplier = 4.0
+	streak_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	streak.material_override = streak_mat
+	var mid := (from_pos + to_pos) / 2.0
+	streak.global_position = mid
+	streak.look_at(to_pos, Vector3.UP)
+	get_tree().current_scene.add_child(streak)
+	var streak_tween := streak.create_tween()
+	streak_tween.tween_property(streak_mat, "albedo_color:a", 0.0, 0.35)
+	streak_tween.tween_callback(streak.queue_free)
+
+
+func _spawn_muzzle_flash(pos: Vector3) -> void:
+	# Particle burst muzzle flash
+	var flash := GPUParticles3D.new()
+	flash.emitting = true
+	flash.one_shot = true
+	flash.amount = 15
+	flash.lifetime = 0.15
+	flash.explosiveness = 1.0
+	flash.global_position = pos
+	var fmat := ParticleProcessMaterial.new()
+	fmat.direction = Vector3(sin(_facing_angle), 0.3, cos(_facing_angle))
+	fmat.spread = 25.0
+	fmat.initial_velocity_min = 3.0
+	fmat.initial_velocity_max = 6.0
+	fmat.gravity = Vector3.ZERO
+	fmat.damping_min = 10.0
+	fmat.damping_max = 15.0
+	fmat.scale_min = 0.4
+	fmat.scale_max = 1.0
+	fmat.color = Color(1.0, 0.8, 0.2, 1.0)
+	flash.process_material = fmat
+	var fmesh := SphereMesh.new()
+	fmesh.radius = 0.04
+	fmesh.height = 0.08
+	flash.draw_pass_1 = fmesh
+	get_tree().current_scene.add_child(flash)
+
+	# Bright core flash sphere
+	var core := MeshInstance3D.new()
+	var core_mesh := SphereMesh.new()
+	core_mesh.radius = 0.12
+	core_mesh.height = 0.24
+	core.mesh = core_mesh
+	var core_mat := StandardMaterial3D.new()
+	core_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	core_mat.albedo_color = Color(1.0, 0.95, 0.7, 1.0)
+	core_mat.emission_enabled = true
+	core_mat.emission = Color(1.0, 0.8, 0.3)
+	core_mat.emission_energy_multiplier = 8.0
+	core_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	core.material_override = core_mat
+	core.global_position = pos
+	get_tree().current_scene.add_child(core)
+
+	var tween := core.create_tween()
+	tween.tween_property(core, "scale", Vector3(2.0, 2.0, 2.0), 0.06)
+	tween.parallel().tween_property(core_mat, "albedo_color:a", 0.0, 0.1)
+	tween.tween_callback(core.queue_free)
+
+	get_tree().create_timer(0.5).timeout.connect(flash.queue_free)
+
+
+func _spawn_impact_sparks(pos: Vector3) -> void:
+	# Spark shower
+	var sparks := GPUParticles3D.new()
+	sparks.emitting = true
+	sparks.one_shot = true
+	sparks.amount = 20
+	sparks.lifetime = 0.4
+	sparks.explosiveness = 0.9
+	sparks.global_position = pos
+	var pmat := ParticleProcessMaterial.new()
+	pmat.direction = Vector3(0, 1, 0)
+	pmat.spread = 60.0
+	pmat.initial_velocity_min = 3.0
+	pmat.initial_velocity_max = 7.0
+	pmat.gravity = Vector3(0, -12, 0)
+	pmat.scale_min = 0.15
+	pmat.scale_max = 0.5
+	pmat.color = Color(1.0, 0.7, 0.1, 1.0)
+	sparks.process_material = pmat
+	var smesh := SphereMesh.new()
+	smesh.radius = 0.025
+	smesh.height = 0.05
+	sparks.draw_pass_1 = smesh
+	get_tree().current_scene.add_child(sparks)
+
+	# Smoke puff
+	var smoke := GPUParticles3D.new()
+	smoke.emitting = true
+	smoke.one_shot = true
+	smoke.amount = 8
+	smoke.lifetime = 0.5
+	smoke.explosiveness = 0.8
+	smoke.global_position = pos
+	var smat := ParticleProcessMaterial.new()
+	smat.direction = Vector3(0, 1, 0)
+	smat.spread = 40.0
+	smat.initial_velocity_min = 0.5
+	smat.initial_velocity_max = 1.5
+	smat.gravity = Vector3(0, 0.5, 0)
+	smat.scale_min = 0.5
+	smat.scale_max = 1.5
+	smat.color = Color(0.5, 0.5, 0.5, 0.4)
+	smoke.process_material = smat
+	var smoke_mesh := SphereMesh.new()
+	smoke_mesh.radius = 0.06
+	smoke_mesh.height = 0.12
+	smoke.draw_pass_1 = smoke_mesh
+	get_tree().current_scene.add_child(smoke)
+
+	get_tree().create_timer(1.0).timeout.connect(sparks.queue_free)
+	get_tree().create_timer(1.5).timeout.connect(smoke.queue_free)

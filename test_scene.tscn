@@ -2,9 +2,12 @@
 
 [ext_resource type="Script" uid="uid://dd7volwgi54ww" path="res://camera_follow.gd" id="camera_1"]
 [ext_resource type="PackedScene" uid="uid://bgbmkq81fbf50" path="res://enemy.tscn" id="enemy_1"]
+[ext_resource type="PackedScene" path="res://enemy2.tscn" id="enemy2_1"]
 [ext_resource type="PackedScene" uid="uid://d2yub1qs10na0" path="res://player.tscn" id="player_1"]
 [ext_resource type="Script" uid="uid://cfrydgpnfgosf" path="res://skill_bar.gd" id="skill_bar_1"]
 [ext_resource type="Script" uid="uid://bquprt2qowymj" path="res://tree.gd" id="tree_script"]
+[ext_resource type="Script" path="res://test_scene.gd" id="test_scene_script"]
+[ext_resource type="Script" path="res://inventory_ui.gd" id="inventory_ui_script"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -22,17 +25,8 @@ albedo_color = Color(0.4, 0.6, 0.35, 1)
 [sub_resource type="BoxShape3D" id="BoxShape_ground"]
 size = Vector3(20, 0.2, 20)
 
-[sub_resource type="PhysicsMaterial" id="PhysMat_pushbox"]
-friction = 0.8
-
-[sub_resource type="BoxMesh" id="BoxMesh_box"]
-
-[sub_resource type="StandardMaterial3D" id="Mat_pushbox"]
-albedo_color = Color(0.9, 0.7, 0.2, 1)
-
-[sub_resource type="BoxShape3D" id="BoxShape_box"]
-
 [node name="TestScene" type="Node3D" unique_id=1943548193]
+script = ExtResource("test_scene_script")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1037691091]
 environment = SubResource("Environment_1")
@@ -58,18 +52,6 @@ surface_material_override/0 = SubResource("Mat_ground")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1173488147]
 shape = SubResource("BoxShape_ground")
 
-[node name="PushBox" type="RigidBody3D" parent="." unique_id=2043331564]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.5, 1)
-mass = 2.0
-physics_material_override = SubResource("PhysMat_pushbox")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="PushBox" unique_id=2059295690]
-mesh = SubResource("BoxMesh_box")
-surface_material_override/0 = SubResource("Mat_pushbox")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="PushBox" unique_id=894393737]
-shape = SubResource("BoxShape_box")
-
 [node name="Player" parent="." unique_id=1569638801 instance=ExtResource("player_1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)
 
@@ -81,3 +63,6 @@ script = ExtResource("skill_bar_1")
 
 [node name="Tree" type="StaticBody3D" parent="." unique_id=134262532]
 script = ExtResource("tree_script")
+
+[node name="InventoryUI" type="CanvasLayer" parent="."]
+script = ExtResource("inventory_ui_script")
