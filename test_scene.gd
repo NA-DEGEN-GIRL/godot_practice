@@ -4,13 +4,17 @@ var _pickup_script: GDScript = preload("res://pickup_item.gd")
 var _chicken_script: GDScript = preload("res://chicken_pickup.gd")
 var _ammo_script: GDScript = preload("res://ammo_pickup.gd")
 var _enemy2_scene: PackedScene = preload("res://enemy2.tscn")
+var _enemy3_scene: PackedScene = preload("res://enemy3.tscn")
+var _enemy4_scene: PackedScene = preload("res://enemy4.tscn")
 
 const CHICKEN_RESPAWN_TIME := 15.0
 const AMMO_RESPAWN_TIME := 12.0
 const PISTOL_RESPAWN_TIME := 30.0
 const MAX_CHICKENS := 3
 const MAX_AMMO_PICKUPS := 2
-const INITIAL_ENEMY2_COUNT := 2
+const INITIAL_ENEMY2_COUNT := 1
+const INITIAL_ENEMY3_COUNT := 1
+const INITIAL_ENEMY4_COUNT := 1
 
 var _chicken_timer: float = 0.0
 var _ammo_timer: float = 0.0
@@ -25,6 +29,10 @@ func _ready() -> void:
 		_spawn_chicken()
 	for i in INITIAL_ENEMY2_COUNT:
 		_spawn_enemy2()
+	for i in INITIAL_ENEMY3_COUNT:
+		_spawn_enemy3()
+	for i in INITIAL_ENEMY4_COUNT:
+		_spawn_enemy4()
 
 
 func _process(delta: float) -> void:
@@ -87,6 +95,22 @@ func _spawn_ammo() -> void:
 
 func _spawn_enemy2() -> void:
 	var enemy := _enemy2_scene.instantiate()
+	var x := randf_range(-7.0, 7.0)
+	var z := randf_range(-7.0, 7.0)
+	enemy.position = Vector3(x, 0, z)
+	add_child(enemy)
+
+
+func _spawn_enemy3() -> void:
+	var enemy := _enemy3_scene.instantiate()
+	var x := randf_range(-7.0, 7.0)
+	var z := randf_range(-7.0, 7.0)
+	enemy.position = Vector3(x, 0, z)
+	add_child(enemy)
+
+
+func _spawn_enemy4() -> void:
+	var enemy := _enemy4_scene.instantiate()
 	var x := randf_range(-7.0, 7.0)
 	var z := randf_range(-7.0, 7.0)
 	enemy.position = Vector3(x, 0, z)

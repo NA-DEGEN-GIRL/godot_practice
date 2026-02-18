@@ -18,6 +18,8 @@ var _sp_gauge_fill: ColorRect
 var _sp_gauge_label: Label
 var _game_over_panel: Control
 var _ammo_label: Label
+var _volume_slider: HSlider
+var _volume_label: Label
 
 
 func _ready() -> void:
@@ -72,6 +74,65 @@ func _ready() -> void:
 	_ammo_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ammo_label.visible = false
 	root.add_child(_ammo_label)
+
+	# Volume control (top-right)
+	_create_volume_control(root)
+
+
+func _create_volume_control(parent: Control) -> void:
+	var container := HBoxContainer.new()
+	container.anchor_left = 1.0
+	container.anchor_right = 1.0
+	container.anchor_top = 0.0
+	container.anchor_bottom = 0.0
+	container.offset_left = -200
+	container.offset_right = -MARGIN
+	container.offset_top = MARGIN
+	container.offset_bottom = MARGIN + 30
+	container.add_theme_constant_override("separation", 8)
+	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(container)
+
+	var icon := Label.new()
+	icon.text = "VOL"
+	icon.add_theme_font_size_override("font_size", 13)
+	icon.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 0.8))
+	icon.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	icon.add_theme_constant_override("outline_size", 2)
+	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.add_child(icon)
+
+	_volume_slider = HSlider.new()
+	_volume_slider.min_value = 0.0
+	_volume_slider.max_value = 1.0
+	_volume_slider.step = 0.05
+	_volume_slider.value = 1.0
+	_volume_slider.custom_minimum_size = Vector2(120, 24)
+	_volume_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_volume_slider.mouse_filter = Control.MOUSE_FILTER_STOP
+	_volume_slider.value_changed.connect(_on_volume_changed)
+	container.add_child(_volume_slider)
+
+	_volume_label = Label.new()
+	_volume_label.text = "100%"
+	_volume_label.add_theme_font_size_override("font_size", 13)
+	_volume_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 0.8))
+	_volume_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+	_volume_label.add_theme_constant_override("outline_size", 2)
+	_volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_volume_label.custom_minimum_size = Vector2(40, 0)
+	_volume_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.add_child(_volume_label)
+
+
+func _on_volume_changed(value: float) -> void:
+	if value <= 0.0:
+		AudioServer.set_bus_mute(0, true)
+	else:
+		AudioServer.set_bus_mute(0, false)
+		AudioServer.set_bus_volume_db(0, linear_to_db(value))
+	_volume_label.text = "%d%%" % int(value * 100)
 
 
 func _create_gauge(parent: Control, y_pos: float, fill_color: Color, label_prefix: String) -> Array:

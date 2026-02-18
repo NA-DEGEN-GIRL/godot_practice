@@ -289,6 +289,9 @@ func _cast_lightning(enemy: Node3D) -> void:
 	var effect := _lightning_scene.instantiate()
 	effect.global_position = enemy.global_position
 	get_tree().current_scene.add_child(effect)
+	# Trigger electrocution stun on enemies that support it
+	if enemy.has_method("apply_electrocution"):
+		enemy.apply_electrocution()
 
 
 func _start_flamethrower() -> void:
