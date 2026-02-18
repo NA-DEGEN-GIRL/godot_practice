@@ -273,7 +273,133 @@ label.modulate = Color(1.0, 0.9, 0.2, 1.0)            # 텍스트 색상
 
 ---
 
-## 6. 렌더링 팁 요약
+## 6. 총알 이펙트 (player.gd)
+
+### 총알 트레이서 (Bullet Tracer)
+
+발사 시 총구에서 착탄 지점까지 빛나는 총알이 날아갑니다:
+
+```gdscript
+func _spawn_bullet_tracer(from_pos: Vector3, to_pos: Vector3) -> void:
+    # 1. 빛나는 총알 머리 (작은 구)
+    var bullet := MeshInstance3D.new()
+    var sphere := SphereMesh.new()
+    sphere.radius = 0.05
+    bullet.mesh = sphere
+    var bullet_mat := StandardMaterial3D.new()
+    bullet_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    bullet_mat.albedo_color = Color(1.0, 1.0, 0.7, 1.0)
+    bullet_mat.emission_enabled = true
+    bullet_mat.emission = Color(1.0, 0.9, 0.5)
+    bullet_mat.emission_energy_multiplier = 6.0   # 강한 발광
+    bullet.material_override = bullet_mat
+```
+
+**`emission_energy_multiplier`**: 값이 클수록 더 밝게 빛납니다. 1.0이 기본이고, 6.0이면 매우 강한 글로우.
+
+```gdscript
+    # 2. 따라다니는 파티클 꼬리
+    var trail := GPUParticles3D.new()
+    trail.amount = 20
+    trail.lifetime = 0.15
+    # ...주황색 작은 구 파티클...
+    bullet.add_child(trail)   # ★ 총알의 자식 → 총알과 함께 이동
+
+    # 3. 총알 비행 애니메이션 (Tween)
+    var dist := from_pos.distance_to(to_pos)
+    var flight_time := clampf(dist / 20.0, 0.15, 0.5)  # 거리에 비례
+    var tween := bullet.create_tween()
+    tween.tween_property(bullet, "global_position", to_pos, flight_time)
+    tween.tween_callback(func():
+        _spawn_impact_sparks(to_pos)     # 착탄 스파크
+        trail.emitting = false            # 파티클 새로 안 만듦
+        bullet.visible = false            # 총알 숨김
+        get_tree().create_timer(0.3).timeout.connect(bullet.queue_free)
+    )
+```
+
+**왜 즉시 `queue_free()`하지 않는가?**
+
+파티클이 이미 생성된 것들은 `emitting = false` 후에도 lifetime 동안 계속 보입니다. 바로 삭제하면 꼬리가 갑자기 사라집니다. 0.3초 기다린 후 삭제하면 자연스럽게 사라집니다.
+
+```gdscript
+    # 4. 직선 스트릭 라인 (잔상)
+    var streak := MeshInstance3D.new()
+    var box := BoxMesh.new()
+    box.size = Vector3(0.02, 0.02, streak_len)   # 매우 얇은 직사각형
+    streak.mesh = box
+    # ...노란 발광 머티리얼...
+    streak.look_at(to_pos, Vector3.UP)             # 타겟 방향으로 회전
+
+    var streak_tween := streak.create_tween()
+    streak_tween.tween_property(streak_mat, "albedo_color:a", 0.0, 0.35)  # 0.35초간 페이드아웃
+    streak_tween.tween_callback(streak.queue_free)
+```
+
+**`look_at(target, up)`**: 메시를 target 방향으로 정렬합니다. 얇은 직사각형이 총알 경로를 따라 배치되어 레이저 같은 잔상이 됩니다.
+
+### 머즐 플래시 (Muzzle Flash)
+
+```gdscript
+func _spawn_muzzle_flash(pos: Vector3) -> void:
+    # 파티클 버스트 (방사형 불꽃)
+    var flash := GPUParticles3D.new()
+    flash.one_shot = true          # ★ 한 번만 발사
+    flash.amount = 15
+    flash.lifetime = 0.15          # 아주 짧은 수명
+    flash.explosiveness = 1.0      # ★ 모든 파티클이 동시에 발사
+    var fmat := ParticleProcessMaterial.new()
+    fmat.direction = Vector3(sin(_facing_angle), 0.3, cos(_facing_angle))  # 총구 방향
+    fmat.spread = 25.0             # ±25도 퍼짐
+
+    # 밝은 코어 (구형 빛)
+    var core := MeshInstance3D.new()
+    # ...밝은 흰노랑 발광 구...
+    tween.tween_property(core, "scale", Vector3(2.0, 2.0, 2.0), 0.06)  # 빠르게 확대
+    tween.parallel().tween_property(core_mat, "albedo_color:a", 0.0, 0.1)  # 빠르게 사라짐
+```
+
+**`explosiveness = 1.0`**: 기본값(0.0)은 파티클이 lifetime 동안 균일하게 생성됩니다. 1.0이면 모든 파티클이 한꺼번에 생성 → 폭발/플래시 효과.
+
+**`one_shot = true`**: 파티클이 한 번만 발사되고 다시 생성되지 않습니다.
+
+### 착탄 스파크 (Impact Sparks)
+
+```gdscript
+func _spawn_impact_sparks(pos: Vector3) -> void:
+    # 스파크 (위로 튀어오르는 불꽃)
+    var sparks := GPUParticles3D.new()
+    sparks.one_shot = true
+    sparks.amount = 20
+    var pmat := ParticleProcessMaterial.new()
+    pmat.direction = Vector3(0, 1, 0)        # 위쪽으로
+    pmat.spread = 60.0                        # 넓게 퍼짐
+    pmat.initial_velocity_min = 3.0
+    pmat.initial_velocity_max = 7.0
+    pmat.gravity = Vector3(0, -12, 0)         # 중력으로 포물선 낙하
+    pmat.color = Color(1.0, 0.7, 0.1, 1.0)   # 주황색
+
+    # 연기 (천천히 피어오르는 회색)
+    var smoke := GPUParticles3D.new()
+    smat.initial_velocity_max = 1.5
+    smat.gravity = Vector3(0, 0.5, 0)         # 약간 위로 (열기)
+    smat.color = Color(0.5, 0.5, 0.5, 0.4)   # 반투명 회색
+```
+
+### 총알 이펙트 조합 시각화
+
+```
+발사 시:
+  [머즐 플래시]    [총알 트레이서 ──────→]    [착탄 스파크]
+  ★☆★             ● ══════════════>           ✦✦✦
+  (0.1초)          (0.15~0.5초)                (0.4초)
+                   + 직선 스트릭 라인           + 연기
+                   (0.35초 페이드아웃)          (0.5초)
+```
+
+---
+
+## 7. 렌더링 팁 요약
 
 | 기법 | 용도 | 설명 |
 |------|------|------|

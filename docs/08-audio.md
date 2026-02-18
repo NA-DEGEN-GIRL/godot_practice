@@ -144,7 +144,96 @@ sfx.bus = "SFX"  # "SFX" 버스로 출력
 
 ---
 
-## 5. 정리
+## 5. 전투/아이템 사운드
+
+### 총소리 (gunshot.wav)
+
+Python + scipy로 합성한 짧은 노이즈 버스트:
+
+```gdscript
+# player.gd _ready()에서
+_sfx_gunshot = AudioStreamPlayer.new()
+_sfx_gunshot.stream = preload("res://sounds/gunshot.wav")
+add_child(_sfx_gunshot)
+
+# 발사 시
+_sfx_gunshot.play()
+```
+
+### 치킨 먹는 소리 (gulp.wav)
+
+아이템 획득 시 일회용 AudioStreamPlayer를 생성하는 패턴:
+
+```gdscript
+# chicken_pickup.gd
+func _on_body_entered(body: Node3D) -> void:
+    body.heal_hp(HEAL_AMOUNT)
+    # ★ 치킨이 삭제되므로 사운드를 씬 루트에 추가
+    var sfx := AudioStreamPlayer.new()
+    sfx.stream = preload("res://sounds/gulp.wav")
+    sfx.bus = "Master"
+    get_tree().current_scene.add_child(sfx)
+    sfx.play()
+    sfx.finished.connect(sfx.queue_free)   # 재생 끝나면 자동 삭제
+    queue_free()   # 치킨 즉시 삭제
+```
+
+**왜 `add_child(sfx)`가 아닌 `current_scene.add_child(sfx)`인가?**
+
+`queue_free()`로 치킨을 삭제하면 자식 노드도 함께 삭제됩니다. 사운드를 치킨의 자식으로 추가하면 소리가 중간에 끊깁니다. 씬 루트에 추가하면 치킨이 삭제돼도 사운드는 끝까지 재생됩니다.
+
+### 좀비 그로울 (zombie_groan.wav)
+
+Enemy2의 공격 사운드. `pitch_scale`로 변형합니다:
+
+```gdscript
+# enemy2.gd
+_sfx_attack = AudioStreamPlayer.new()
+_sfx_attack.stream = preload("res://sounds/zombie_groan.wav")
+_sfx_attack.volume_db = -3.0
+add_child(_sfx_attack)
+
+# 공격 시
+_sfx_attack.pitch_scale = randf_range(0.8, 1.2)   # ★ 매번 다른 음높이
+_sfx_attack.play()
+```
+
+**`pitch_scale` 기법:**
+- `0.8` = 느리고 낮은 소리 (크고 무거운 느낌)
+- `1.0` = 원본
+- `1.2` = 빠르고 높은 소리 (작고 날카로운 느낌)
+
+하나의 WAV로도 0.8~1.2 랜덤 범위를 주면 매번 다르게 들려 반복감이 줄어듭니다. 풋스텝, 타격음, 총소리 등 반복적인 효과음에 널리 사용됩니다.
+
+### 탄약 픽업 소리
+
+같은 gulp.wav를 높은 pitch로 재사용:
+
+```gdscript
+# ammo_pickup.gd
+sfx.stream = preload("res://sounds/gulp.wav")
+sfx.pitch_scale = 1.8   # 원본보다 훨씬 높고 빠르게 → 금속 딸깍 느낌
+```
+
+**사운드 재사용 팁**: pitch_scale을 크게 바꾸면 같은 파일이라도 완전히 다른 소리처럼 들립니다. 별도 파일 없이 다양한 효과를 만들 수 있습니다.
+
+---
+
+## 6. 사운드 파일 목록
+
+| 파일 | 용도 | 생성 방법 |
+|------|------|-----------|
+| `lightening_bolt_001.wav` | 번개 스킬 | 외부 에셋 |
+| `fire_storm_001.wav` | 화염방사기 | 외부 에셋 |
+| `fast_teleportation_001.wav` | 텔레포트 | 외부 에셋 |
+| `gunshot.wav` | 권총 발사 | Python scipy 합성 |
+| `gulp.wav` | 치킨/탄약 픽업 | Python scipy 합성 |
+| `poison_spit.wav` | 적 독 공격 | Python scipy 합성 |
+| `zombie_groan.wav` | 적2 근접 공격 | Python scipy 합성 |
+
+---
+
+## 7. 정리
 
 | 개념 | 설명 |
 |------|------|

@@ -318,6 +318,149 @@ _player.hp_changed.connect(_on_hp_changed)
 
 ---
 
+## 6. 탄약 표시 (skill_bar.gd)
+
+권총을 장착했을 때만 스킬바 위에 탄약 수를 표시합니다:
+
+### 생성 (우측 하단, 스킬바 위)
+
+```gdscript
+_ammo_label = Label.new()
+_ammo_label.anchor_left = 1.0
+_ammo_label.anchor_right = 1.0
+_ammo_label.anchor_top = 1.0
+_ammo_label.anchor_bottom = 1.0
+_ammo_label.offset_top = -(SLOT_SIZE + MARGIN + 28)   # 스킬바 위에 배치
+_ammo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+_ammo_label.visible = false   # 기본은 숨김
+```
+
+### 업데이트 (조건부 표시 + 색상 변경)
+
+```gdscript
+func _process(_delta: float) -> void:
+    # ...스킬바, HP/SP 업데이트...
+
+    # 탄약 표시: 권총 장착 시에만
+    if _player.equipped_right_hand == "pistol":
+        _ammo_label.visible = true
+        _ammo_label.text = "AMMO: %d" % _player.pistol_ammo
+        if _player.pistol_ammo <= 0:
+            _ammo_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))  # 빨강
+        else:
+            _ammo_label.add_theme_color_override("font_color", Color.WHITE)
+    else:
+        _ammo_label.visible = false
+```
+
+```
+권총 장착 시:                       미장착 시:
+                 AMMO: 5            (표시 안 됨)
+  ┌───┬───┬───┬───┐
+  │ ⚡ │ 🔥 │ 💨 │   │
+  └───┴───┴───┴───┘
+```
+
+---
+
+## 7. 인벤토리 UI (inventory_ui.gd)
+
+### CanvasLayer 기반 오버레이
+
+인벤토리도 CanvasLayer이므로 3D 세계 위에 고정 표시됩니다.
+
+```gdscript
+extends CanvasLayer
+
+func _ready() -> void:
+    _player = get_node("../Player")
+```
+
+### I키 토글
+
+```gdscript
+func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventKey and event.pressed and event.keycode == KEY_I:
+        _toggle_inventory()
+
+func _toggle_inventory() -> void:
+    if _panel:
+        _close_inventory()
+    else:
+        _open_inventory()
+    _player.inventory_open = _panel != null   # 플레이어에게 상태 전달
+```
+
+**`inventory_open` 플래그의 역할**: player.gd에서 인벤토리가 열려있으면 이동/공격을 차단합니다. UI와 게임 로직의 상태 동기화입니다.
+
+### 슬롯 인터랙션
+
+```gdscript
+# 각 슬롯에 gui_input 시그널 연결
+slot.gui_input.connect(_on_slot_input.bind(i))
+
+func _on_slot_input(event: InputEvent, index: int) -> void:
+    if event is InputEventMouseButton and event.pressed:
+        match event.button_index:
+            MOUSE_BUTTON_LEFT:  _equip_item(index)    # 좌클릭 = 장착
+            MOUSE_BUTTON_RIGHT: _trash_item(index)    # 우클릭 = 버리기
+```
+
+**`.bind(i)` 패턴**: 시그널 콜백에 추가 인자를 전달합니다. 8개 슬롯이 모두 같은 함수를 사용하되, `index`로 어떤 슬롯인지 구분합니다.
+
+### 장착 로직
+
+```gdscript
+func _equip_item(index: int) -> void:
+    var item_id := _player.inventory[index]
+    if item_id == "":
+        return
+
+    # 기존 장착 아이템이 있으면 인벤토리로 반환
+    if _player.equipped_right_hand != "":
+        var old := _player.unequip_right_hand()
+        _player.inventory[index] = old       # 교체
+    else:
+        _player.inventory[index] = ""        # 빈 칸으로
+
+    _player.equip_to_right_hand(item_id)     # 새 아이템 장착
+    _refresh_slots()                          # UI 갱신
+```
+
+---
+
+## 8. Game Over 화면 (skill_bar.gd)
+
+플레이어 HP가 0이 되면 나타나는 오버레이:
+
+```gdscript
+func show_game_over() -> void:
+    # 어두운 반투명 배경 (0 → 0.6 알파 페이드)
+    var overlay := ColorRect.new()
+    overlay.color = Color(0, 0, 0, 0.0)
+    fade_tween.tween_property(overlay, "color:a", 0.6, 1.0)
+
+    # "GAME OVER" 텍스트 (큰 빨간 글씨)
+    title.text = "GAME OVER"
+    title.add_theme_font_size_override("font_size", 64)
+    title.add_theme_color_override("font_color", Color(0.9, 0.15, 0.1))
+
+    # Restart 버튼
+    btn.pressed.connect(_restart_game)
+
+    # 순차 애니메이션 (fade → title → subtitle → button)
+    tween.tween_property(title, "modulate:a", 1.0, 0.5).set_delay(0.3)
+    tween.tween_property(subtitle, "modulate:a", 1.0, 0.5)
+    tween.tween_property(btn, "modulate:a", 1.0, 0.3)
+
+func _restart_game() -> void:
+    get_tree().reload_current_scene()   # 씬 전체 다시 로드
+```
+
+**`reload_current_scene()`**: 현재 씬을 완전히 삭제하고 다시 로드합니다. 모든 변수가 초기화되므로 간단한 리스타트에 적합합니다.
+
+---
+
 ## 다음 단계
 
 [07. 이펙트와 렌더링](07-effects-and-rendering.md)에서 머티리얼, 파티클, 조명을 자세히 살펴봅니다.

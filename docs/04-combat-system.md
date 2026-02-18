@@ -360,6 +360,136 @@ func _create_hp_bar() -> void:
 
 ---
 
+## 8. 권총 사격 시스템 (player.gd)
+
+### 탄약 시스템
+
+```gdscript
+var pistol_ammo: int = 0
+const PISTOL_MAX_AMMO := 8       # 최대 탄약
+const PISTOL_DAMAGE := 35.0      # 기본 데미지
+const PISTOL_FIRE_RATE := 0.4    # 발사 간격 (초)
+var _pistol_cooldown: float = 0.0
+```
+
+### 우클릭 → 발사
+
+```gdscript
+func _unhandled_input(event: InputEvent) -> void:
+    # ...
+    elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+        if event.pressed:
+            _shoot_pistol(event.position)  # 클릭 위치 전달
+```
+
+### 조준 로직 (아이소메트릭 카메라 대응)
+
+아이소메트릭 카메라에서 적을 클릭하면, 카메라 각도 때문에 바닥 투영 좌표가 적의 실제 위치와 어긋날 수 있습니다:
+
+```
+아이소메트릭 뷰:
+     적 머리 ← 여기를 클릭
+    /
+   /  카메라 레이
+  /
+ ● ← 바닥 투영 (실제 적 위치와 다름!)
+```
+
+**해결: 2단계 레이캐스트**
+
+```gdscript
+func _shoot_pistol(screen_pos: Vector2) -> void:
+    # 가드 조건
+    if equipped_right_hand != "pistol" or pistol_ammo <= 0 or _pistol_cooldown > 0.0:
+        return
+
+    var camera := get_viewport().get_camera_3d()
+    var space := get_world_3d().direct_space_state
+
+    # ★ 1단계: 카메라에서 클릭 지점으로 레이캐스트 → 적을 직접 클릭했는지?
+    var cam_from := camera.project_ray_origin(screen_pos)
+    var cam_dir := camera.project_ray_normal(screen_pos)
+    var cam_query := PhysicsRayQueryParameters3D.create(cam_from, cam_from + cam_dir * 100.0)
+    cam_query.exclude = [get_rid()]
+    var cam_result := space.intersect_ray(cam_query)
+
+    var aim_point: Vector3
+    if cam_result and cam_result.collider.is_in_group("enemy"):
+        # 적 클릭 → 적의 실제 ground position 사용
+        aim_point = Vector3(cam_result.collider.global_position.x, 0,
+                            cam_result.collider.global_position.z)
+    else:
+        # 빈 곳 클릭 → 바닥 투영
+        var t := -cam_from.y / cam_dir.y
+        aim_point = cam_from + cam_dir * t
+```
+
+### 방향 전환 + 총구 레이캐스트
+
+```gdscript
+    # 캐릭터를 조준 방향으로 회전
+    var aim_dir := aim_point - global_position
+    aim_dir.y = 0.0
+    _facing_angle = atan2(aim_dir.x, aim_dir.z)
+    char_model.rotation.y = _facing_angle
+
+    # 총구 위치 (캐릭터 전방 0.5m, 높이 0.8m)
+    var forward := Vector3(sin(_facing_angle), 0, cos(_facing_angle))
+    var muzzle_pos := global_position + Vector3(0, 0.8, 0) + forward * 0.5
+
+    # ★ 2단계: 총구에서 조준 방향으로 레이캐스트
+    var bullet_end := muzzle_pos + forward * 30.0
+    var query := PhysicsRayQueryParameters3D.create(muzzle_pos, bullet_end)
+    query.exclude = [get_rid()]
+    var result := space.intersect_ray(query)
+```
+
+```
+조준 흐름:
+1. 마우스 클릭 위치 → 카메라 레이캐스트 → 적인지 확인
+2. 캐릭터가 조준 방향으로 회전
+3. 총구에서 직선 레이캐스트 → 경로 상 물체 판정
+```
+
+### 데미지 적용
+
+```gdscript
+    if result and result.collider.is_in_group("enemy"):
+        var enemy: Node3D = result.collider
+        var is_crit := randf() < crit_chance
+        var dmg := PISTOL_DAMAGE * (crit_multiplier if is_crit else 1.0)
+        enemy.take_damage(dmg, is_crit)   # 근접 공격과 동일한 함수
+```
+
+### 발사 쿨다운
+
+```gdscript
+# _physics_process에서 매 프레임 감소
+if _pistol_cooldown > 0.0:
+    _pistol_cooldown = maxf(_pistol_cooldown - delta, 0.0)
+```
+
+---
+
+## 9. 전투 흐름 요약
+
+```
+근접 공격:
+  좌클릭(적) → 접근 → 사정거리 도달 → 크리 판정 → take_damage()
+
+권총 사격:
+  우클릭 → 방향 회전 → 탄약 소모 → 레이캐스트 → 적중 시 take_damage()
+  + 총알 트레이서 + 머즐 플래시 + 착탄 스파크
+
+적(독) 공격:
+  플레이어 감지 → 접근 → 독 투사체 발사 → 포물선 비행 → 착탄 시 거리 판정
+
+적(근접) 공격:
+  배회 → 플레이어 감지 → 달려서 추격 → jab 애니메이션 → 끝에서 거리 판정
+```
+
+---
+
 ## 다음 단계
 
 [05. 스킬 시스템](05-skill-system.md)에서 번개와 화염방사기 스킬을 살펴봅니다.
