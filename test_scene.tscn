@@ -1,10 +1,10 @@
-[gd_scene format=4 uid="uid://c4lwpbsbbleie"]
+[gd_scene format=3 uid="uid://c4lwpbsbbleie"]
 
 [ext_resource type="Script" uid="uid://dd7volwgi54ww" path="res://camera_follow.gd" id="camera_1"]
-[ext_resource type="Script" path="res://tree.gd" id="tree_script"]
-[ext_resource type="PackedScene" path="res://enemy.tscn" id="enemy_1"]
-[ext_resource type="PackedScene" path="res://player.tscn" id="player_1"]
+[ext_resource type="PackedScene" uid="uid://bgbmkq81fbf50" path="res://enemy.tscn" id="enemy_1"]
+[ext_resource type="PackedScene" uid="uid://d2yub1qs10na0" path="res://player.tscn" id="player_1"]
 [ext_resource type="Script" uid="uid://cfrydgpnfgosf" path="res://skill_bar.gd" id="skill_bar_1"]
+[ext_resource type="Script" uid="uid://bquprt2qowymj" path="res://tree.gd" id="tree_script"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -79,5 +79,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, -1)
 [node name="SkillBar" type="CanvasLayer" parent="." unique_id=109909258]
 script = ExtResource("skill_bar_1")
 
-[node name="Tree" type="StaticBody3D" parent="."]
+[node name="Tree" type="StaticBody3D" parent="." unique_id=134262532]
 script = ExtResource("tree_script")

@@ -1,12 +1,19 @@
-extends StaticBody3D
+extends CharacterBody3D
 
 @export var max_hp: float = 100.0
+@export var move_speed: float = 2.5
+@export var detect_range: float = 8.0
+@export var stop_range: float = 1.5
+@export var gravity: float = 9.8
 
 var current_hp: float
 var is_alive: bool = true
+var _target: Node3D
 
 @onready var _hp_bar: Node3D = $HPBar
 @onready var _hp_fill: MeshInstance3D = $HPBar/Fill
+@onready var _anim_player: AnimationPlayer = $EnemyModel/AnimationPlayer
+@onready var _model: Node3D = $EnemyModel
 var _hp_label: Label3D
 
 
@@ -15,6 +22,64 @@ func _ready() -> void:
 	add_to_group("enemy")
 	_create_hp_label()
 	_update_hp_bar()
+
+
+func _physics_process(delta: float) -> void:
+	# Gravity
+	if not is_on_floor():
+		velocity.y -= gravity * delta
+	else:
+		velocity.y = 0.0
+
+	if not is_alive:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		move_and_slide()
+		return
+
+	# Find player
+	_target = _find_player()
+	var is_moving := false
+
+	if _target:
+		var to_target := _target.global_position - global_position
+		to_target.y = 0.0
+		var dist := to_target.length()
+
+		if dist < detect_range and dist > stop_range:
+			# Chase
+			var dir := to_target.normalized()
+			velocity.x = dir.x * move_speed
+			velocity.z = dir.z * move_speed
+			# Face movement direction (model faces +Z, look_at faces -Z, so rotate 180)
+			_model.look_at(global_position - dir, Vector3.UP)
+			is_moving = true
+		else:
+			velocity.x = 0.0
+			velocity.z = 0.0
+
+	move_and_slide()
+
+	# Animation control
+	if _anim_player:
+		if is_moving and not _anim_player.is_playing():
+			var anims := _anim_player.get_animation_list()
+			if anims.size() > 0:
+				_anim_player.play(anims[0])
+		elif not is_moving and _anim_player.is_playing():
+			_anim_player.stop()
+
+	# HP bar face camera
+	var camera := get_viewport().get_camera_3d()
+	if camera and _hp_bar:
+		_hp_bar.global_rotation = camera.global_rotation
+
+
+func _find_player() -> Node3D:
+	var players := get_tree().get_nodes_in_group("player")
+	if players.size() > 0:
+		return players[0]
+	return null
 
 
 func _create_hp_label() -> void:
@@ -28,12 +93,6 @@ func _create_hp_label() -> void:
 	_hp_label.outline_modulate = Color(0, 0, 0, 0.8)
 	_hp_label.modulate = Color(1, 1, 1, 0.9)
 	_hp_bar.add_child(_hp_label)
-
-
-func _process(_delta: float) -> void:
-	var camera := get_viewport().get_camera_3d()
-	if camera and _hp_bar:
-		_hp_bar.global_rotation = camera.global_rotation
 
 
 func take_damage(amount: float, is_crit: bool = false) -> void:
@@ -112,7 +171,6 @@ func _find_clear_position() -> Vector3:
 		query.exclude = [get_rid()]
 		query.collision_mask = 0xFFFFFFFF
 		var results := space.intersect_shape(query)
-		# Only ground hit (1 result) or nothing = clear spot
 		if results.size() <= 1:
 			return Vector3(x, 0.0, z)
 	return Vector3(randf_range(-8.0, 8.0), 0.0, randf_range(-8.0, 8.0))

@@ -1,6 +1,7 @@
 extends CharacterBody3D
 
 @export var move_speed: float = 5.0
+@export var run_speed: float = 10.0
 @export var push_force: float = 3.0
 @export var attack_range: float = 2.0
 @export var attack_damage: float = 25.0
@@ -16,6 +17,8 @@ var _moving: bool = false
 var _attack_target: Node3D = null
 var _attack_timer: float = 0.0
 var _mouse_held: bool = false
+var _running: bool = false
+var _anim_player: AnimationPlayer
 
 # Skill system (exposed for skill_bar to read)
 var skill_cooldowns: Array[float] = [0.0, 0.0, 0.0, 0.0]
@@ -41,6 +44,7 @@ var _sfx_teleport: AudioStreamPlayer
 
 
 func _ready() -> void:
+	add_to_group("player")
 	_target = global_position
 	current_hp = max_hp
 	current_sp = max_sp
@@ -58,6 +62,9 @@ func _ready() -> void:
 	add_child(_sfx_teleport)
 	_teleport_scene = preload("res://teleport_effect.tscn")
 	_create_hp_bar()
+	var model := get_node_or_null("CharacterModel")
+	if model:
+		_anim_player = model.find_children("*", "AnimationPlayer").front() as AnimationPlayer
 
 
 func _process(_delta: float) -> void:
@@ -116,9 +123,11 @@ func take_damage(amount: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		_mouse_held = event.pressed
+		_running = Input.is_key_pressed(KEY_CTRL)
 		if event.pressed:
 			_handle_click(event.position)
 	elif event is InputEventMouseMotion and _mouse_held:
+		_running = Input.is_key_pressed(KEY_CTRL)
 		_handle_drag(event.position)
 	elif event is InputEventKey:
 		if event.pressed and not event.echo:
@@ -374,6 +383,7 @@ func _physics_process(delta: float) -> void:
 
 	if not _moving:
 		velocity = Vector3.ZERO
+		_play_anim("")
 		return
 
 	var diff := _target - global_position
@@ -381,9 +391,18 @@ func _physics_process(delta: float) -> void:
 	if diff.length() < 0.1:
 		_moving = false
 		velocity = Vector3.ZERO
+		_play_anim("")
 		return
 
-	velocity = diff.normalized() * move_speed
+	var speed := run_speed if _running else move_speed
+	velocity = diff.normalized() * speed
+	_play_anim("run" if _running else "walk")
+
+	# Rotate model to face movement direction
+	var model := get_node_or_null("CharacterModel")
+	if model:
+		model.rotation.y = atan2(velocity.x, velocity.z)
+
 	move_and_slide()
 	global_position.x = clampf(global_position.x, -9.5, 9.5)
 	global_position.z = clampf(global_position.z, -9.5, 9.5)
@@ -395,3 +414,30 @@ func _physics_process(delta: float) -> void:
 			var push_dir := -collision.get_normal()
 			push_dir.y = 0.0
 			collider.apply_central_impulse(push_dir * push_force)
+
+
+func _play_anim(anim_name: String) -> void:
+	if not _anim_player:
+		return
+	if anim_name == "":
+		if _anim_player.is_playing():
+			_anim_player.stop()
+		return
+	# Map simple names to actual animation names in the GLB
+	var anims := _anim_player.get_animation_list()
+	var target := ""
+	for a in anims:
+		if anim_name == "walk" and "walk" in a.to_lower():
+			target = a
+			break
+		elif anim_name == "run" and ("run" in a.to_lower() or "walk" in a.to_lower()):
+			target = a
+			break
+	if target == "" and anims.size() > 0:
+		target = anims[0]
+	if target != "" and _anim_player.current_animation != target:
+		_anim_player.play(target)
+		if anim_name == "run":
+			_anim_player.speed_scale = 2.0
+		else:
+			_anim_player.speed_scale = 1.0
