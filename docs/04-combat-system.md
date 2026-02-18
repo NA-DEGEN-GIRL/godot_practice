@@ -486,7 +486,43 @@ if _pistol_cooldown > 0.0:
 
 적(근접) 공격:
   배회 → 플레이어 감지 → 달려서 추격 → jab 애니메이션 → 끝에서 거리 판정
+
+적3(감전 가능):
+  배회 → 추격 → left_jab (약한 데미지 8)
+  + 번개 스킬 적중 시 → apply_electrocution() → 3초 스턴
+
+적4(게으른 돌진):
+  배회 ↔ 수면 반복 → 플레이어 접근 시 running 돌진 → roll_dodge 공격 (65 데미지)
 ```
+
+---
+
+## 10. 번개 스킬 + 감전 연동
+
+번개 스킬(1번키)이 enemy3를 맞추면 데미지와 함께 3초간 스턴됩니다:
+
+```gdscript
+# player.gd
+func _cast_lightning(enemy: Node3D) -> void:
+    var dmg := 40.0 * (crit_multiplier if is_crit else 1.0)
+    enemy.take_damage(dmg, is_crit)
+    # ★ 감전 지원 적에게만 스턴 적용
+    if enemy.has_method("apply_electrocution"):
+        enemy.apply_electrocution()
+```
+
+```gdscript
+# enemy3.gd
+func apply_electrocution() -> void:
+    _is_stunned = true
+    _stun_timer = STUN_DURATION    # 3초
+    velocity = Vector3.ZERO
+    _sfx_electrocution.play()
+    _anim_player.play(_anim_electrocution)  # 감전 리액션
+    _spawn_stun_text()                       # "STUNNED!" 텍스트
+```
+
+**`has_method()` 패턴**: 모든 적이 동일 인터페이스(`take_damage`)를 공유하면서, 특수 기능(`apply_electrocution`)은 지원하는 적만 구현합니다. 이 방식으로 기존 enemy/enemy2 코드를 수정할 필요가 없습니다.
 
 ---
 

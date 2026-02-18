@@ -1,22 +1,24 @@
 # 11. 적 AI 시스템
 
-이 문서는 두 종류 적의 AI 행동 패턴, 애니메이션 상태 머신, 공격 시스템을 설명합니다.
+이 문서는 네 종류 적의 AI 행동 패턴, 애니메이션 상태 머신, 공격 시스템을 설명합니다.
 
 ---
 
 ## 1. 적 종류 비교
 
-| | Enemy (독 공격) | Enemy2 (근접 공격) |
-|---|---|---|
-| **파일** | `enemy.gd` + `enemy.tscn` | `enemy2.gd` + `enemy2.tscn` |
-| **모델** | `enemy_rigging_textured_fixed.glb` | `enemy2_rigging_textured_3motions.glb` |
-| **HP** | 100 | 120 |
-| **공격 방식** | 독 투사체 (원거리) | 주먹 (근접) |
-| **공격 데미지** | 8 (독) | 15 (주먹) |
-| **공격 사거리** | 3.0 | 1.8 |
-| **이동 패턴** | 감지 시 추격만 | 평소 배회 + 감지 시 추격 |
-| **애니메이션** | 1개 (걷기) | 3개 (걷기, 달리기, 주먹) |
-| **사운드** | 독 뱉기 | 좀비 그로울 |
+| | Enemy (독) | Enemy2 (근접) | Enemy3 (감전) | Enemy4 (게으른 돌진) |
+|---|---|---|---|---|
+| **파일** | `enemy.gd` | `enemy2.gd` | `enemy3.gd` | `enemy4.gd` |
+| **모델** | `enemy_rigging_textured_fixed.glb` | `enemy2_rigging_textured_3motions.glb` | `enemy3.glb` | `enemy4.glb` |
+| **HP** | 100 | 120 | 100 | 180 |
+| **공격 방식** | 독 투사체 (원거리) | 주먹 (근접) | 잽 (근접, 약함) | 돌진 구르기 (강력) |
+| **공격 데미지** | 8 | 15 | 8 | 65 (~HP의 1/3) |
+| **공격 사거리** | 3.0 | 1.8 | 1.8 | 1.2 |
+| **이동 패턴** | 감지 시 추격만 | 배회 + 추격 | 배회 + 추격 | 배회 ↔ 수면 + 돌진 |
+| **애니메이션** | 1개 | 3개 | 4개 (감전 포함) | 4개 (수면 포함) |
+| **사운드** | 독 뱉기 | 좀비 그로울 | 공격 사운드 + 감전 | 지진 공격 |
+| **특수 기능** | - | - | 번개 맞으면 3초 스턴 | 수면/기상 사이클 |
+| **HP바 색** | 빨간색 | 빨간색 | 보라색 | 주황색 |
 
 ---
 
@@ -386,9 +388,280 @@ _sfx_attack.play()
 
 ---
 
+## 11. Enemy3 - 감전 스턴 적
+
+### 특징
+
+Enemy2와 비슷한 배회/추격/공격 AI이지만, **번개 스킬에 특수 반응**합니다:
+
+- 약한 공격력 (8 데미지) - 느리게 접근하는 약한 적
+- 번개(1번 스킬) 적중 시 **3초간 스턴** + 감전 애니메이션
+- 스턴 중 이동/공격 불가, "STUNNED!" 텍스트 표시
+
+### 상태 머신
+
+```
+            ┌─────────┐
+            │ WANDER  │ ← 기본 상태 (느린 걷기, 1.2 속도)
+            └────┬────┘
+                 │ 감지 (7m)
+                 ▼
+            ┌─────────┐
+            │  CHASE  │ (달리기, 3.5 속도)
+            └────┬────┘
+                 │ 사정거리 (1.8m)
+                 ▼
+            ┌─────────┐
+            │ ATTACK  │ (left_jab, 8 데미지)
+            └────┬────┘
+                 │ 번개 스킬 적중
+                 ▼
+            ┌─────────┐
+            │ STUNNED │ (3초, 감전 애니메이션 루프)
+            └─────────┘
+```
+
+### 감전 (Electrocution) 구현
+
+```gdscript
+# 추가 상태 변수
+var _is_stunned: bool = false
+var _stun_timer: float = 0.0
+const STUN_DURATION := 3.0
+
+func apply_electrocution() -> void:
+    if not is_alive:
+        return
+    _is_stunned = true
+    _stun_timer = STUN_DURATION
+    _is_attacking_anim = false        # 공격 중이었으면 취소
+    velocity = Vector3.ZERO
+    _sfx_electrocution.play()
+    if _anim_player and _anim_electrocution != "":
+        _anim_player.stop()
+        _anim_player.play(_anim_electrocution)
+    _spawn_stun_text()
+```
+
+**스턴 상태 처리** (`_physics_process` 상단):
+
+```gdscript
+if _is_stunned:
+    _stun_timer -= delta
+    velocity = Vector3.ZERO           # 이동 불가
+    if _stun_timer <= 0.0:
+        _is_stunned = false           # 스턴 해제
+        _is_attacking_anim = false
+        _current_anim = ""            # 다음 상태로 자연스럽게 전환
+    return                             # 나머지 AI 로직 건너뜀
+```
+
+### 애니메이션 감지 (4가지)
+
+```gdscript
+func _detect_animations() -> void:
+    for a in anims:
+        var lower := a.to_lower()
+        if "electrocution" in lower or "shock" in lower:
+            _anim_electrocution = a   # ★ 감전 반응 (추가)
+        elif "walk" in lower:
+            _anim_walk = a
+        elif "run" in lower:
+            _anim_run = a
+        elif "jab" in lower or "attack" in lower:
+            _anim_attack = a
+```
+
+### 스턴 중 애니메이션 루프
+
+감전 애니메이션이 끝나도 스턴 타이머가 남아있으면 다시 재생:
+
+```gdscript
+func _on_animation_finished(anim_name: String) -> void:
+    if _is_stunned:
+        if _anim_electrocution != "" and _stun_timer > 0.0:
+            _anim_player.play(_anim_electrocution)  # 계속 반복
+        return
+    # ... 일반 공격 판정 ...
+```
+
+---
+
+## 12. Enemy4 - 게으른 돌진 적
+
+### 특징
+
+평소에는 **걸어다니다 잠드는** 게으른 캐릭터지만, 플레이어가 가까이 오면 **돌진하여 강력한 한 방**을 날립니다:
+
+- 높은 HP (180) + 높은 공격력 (65, 플레이어 HP의 약 1/3)
+- 크리티컬 시 130 데미지 (HP의 절반 이상!)
+- 배회 ↔ 수면 랜덤 반복 (게으른 패턴)
+- 공격: running으로 플레이어에게 돌진 → 가까이 도달하면 roll_dodge 공격 + 지진 이펙트
+
+### 상태 머신
+
+```
+     ┌──────────┐     3~5초 후     ┌──────────┐
+     │  WANDER  │ ──────────────→ │  SLEEP   │
+     │  (배회)   │ ←────────────── │  (수면)   │
+     └────┬─────┘     8~15초 후    └────┬─────┘
+          │ 감지 (3.5m)                  │ 감지 (3.5m)
+          ▼                              ▼ (즉시 기상)
+     ┌──────────┐
+     │  CHARGE  │ ← running으로 돌진
+     └────┬─────┘
+          │ 사정거리 (1.2m)
+          ▼
+     ┌──────────┐
+     │  ATTACK  │ ← roll_dodge + 지진 사운드 + 먼지 파티클
+     └──────────┘
+```
+
+### 수면 사이클
+
+```gdscript
+func _fall_asleep() -> void:
+    _is_sleeping = true
+    _sleep_timer = randf_range(8.0, 15.0)  # 8~15초 수면
+    velocity = Vector3.ZERO
+    if _anim_sleep != "":
+        _play_anim_force(_anim_sleep)      # 수면 애니메이션
+
+func _do_sleep(delta: float) -> void:
+    _sleep_timer -= delta
+    # 1.5초마다 "z" 글자 떠오름
+    _zzz_timer -= delta
+    if _zzz_timer <= 0.0:
+        _zzz_timer = 1.5
+        _spawn_zzz()
+    # 수면 애니메이션 루프
+    if _anim_player and not _anim_player.is_playing():
+        _anim_player.play(_anim_sleep)
+    if _sleep_timer <= 0.0:
+        _wake_up()
+```
+
+### "zzz" 떠오르는 이펙트
+
+수면 중 1.5초마다 "z" 글자가 머리 위에서 떠오르며 사라집니다:
+
+```gdscript
+func _spawn_zzz() -> void:
+    var label := Label3D.new()
+    label.text = "z"
+    label.font_size = 32
+    label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+    var node := Node3D.new()
+    node.global_position = global_position + Vector3(0.3, 2.2, 0)
+    node.add_child(label)
+    get_tree().current_scene.add_child(node)
+    var tween := node.create_tween()
+    tween.tween_property(node, "position:y", node.position.y + 1.5, 2.0)
+    tween.parallel().tween_property(label, "modulate:a", 0.0, 2.0).set_delay(0.5)
+    tween.tween_callback(node.queue_free)
+```
+
+**왜 `add_child`가 아닌 `current_scene.add_child`?** 적이 이동하면 자식 노드도 같이 움직입니다. "z" 글자는 생성 위치에서 위로만 떠올라야 하므로 씬 루트에 추가합니다.
+
+### 돌진 공격 (2단계)
+
+**Phase 1: 달려가기**
+
+```gdscript
+func _do_charge(_delta: float) -> void:
+    var to_target := _target.global_position - global_position
+    to_target.y = 0.0
+    var dist := to_target.length()
+
+    if dist <= attack_range:    # 1.2m까지 접근
+        # Phase 2로 전환: roll attack
+        _attack_phase = 2
+        _is_attacking_anim = true
+        _sfx_attack.play()      # 지진 사운드
+        _spawn_ground_shake()   # 먼지 파티클
+        _anim_player.play(_anim_attack)  # roll_dodge 애니메이션
+        return
+
+    # 아직 멀면 계속 달려감
+    velocity = to_target.normalized() * run_speed
+    _play_anim(_anim_run)
+```
+
+**Phase 2: 공격 판정 (애니메이션 끝에서)**
+
+```gdscript
+func _on_animation_finished(anim_name: String) -> void:
+    if _is_attacking_anim and _attack_phase == 2:
+        _is_attacking_anim = false
+        _attack_phase = 0
+        if _target and dist <= attack_range + 0.5:
+            _target.take_damage(attack_damage)  # 65 데미지!
+        _awake_timer = randf_range(3.0, 5.0)    # 공격 후 다시 게으른 사이클
+```
+
+### 지진 먼지 이펙트
+
+공격 시 발밑에 먼지 파티클이 폭발합니다:
+
+```gdscript
+func _spawn_ground_shake() -> void:
+    var dust := GPUParticles3D.new()
+    dust.one_shot = true
+    dust.amount = 30
+    dust.explosiveness = 0.9
+    # 360도 방향으로 퍼짐
+    pmat.spread = 180.0
+    pmat.initial_velocity_min = 2.0
+    pmat.initial_velocity_max = 4.0
+    pmat.color = Color(0.6, 0.5, 0.3, 0.6)  # 흙빛 갈색
+```
+
+### 피격 시 기상
+
+잠자는 중 데미지를 받으면 즉시 깨어납니다:
+
+```gdscript
+func take_damage(amount: float, is_crit: bool = false) -> void:
+    # ...
+    if _is_sleeping:
+        _wake_up()    # ★ 잠에서 깨움
+    if current_hp <= 0.0:
+        _die()
+```
+
+### 스왑된 애니메이션 처리
+
+GLB 모델의 애니메이션 이름이 실제 동작과 반대인 경우, 코드에서 매핑을 교체합니다:
+
+```gdscript
+func _detect_animations() -> void:
+    for a in anims:
+        var lower := a.to_lower()
+        # NOTE: GLB에서 dodge=수면, sleep=공격으로 스왑됨
+        if "roll" in lower or "dodge" in lower:
+            _anim_sleep = a    # dodge 애니메이션 → 수면용
+        elif "sleep" in lower:
+            _anim_attack = a   # sleep 애니메이션 → 공격용
+```
+
+모델을 다시 리깅하지 않고도 코드에서 유연하게 해결할 수 있습니다.
+
+---
+
+## 13. 정리
+
+| 적 | AI 특징 | 교훈 |
+|---|---|---|
+| Enemy | 단순 추격 + 원거리 | 기본 적 AI 패턴 |
+| Enemy2 | 3상태 머신 (배회/추격/공격) | 상태 기반 AI 설계 |
+| Enemy3 | 스턴 상태 추가 | `has_method()` 패턴으로 확장 |
+| Enemy4 | 수면/기상 사이클 + 돌진 | 다단계 공격, 시각 이펙트(zzz, 먼지) |
+
+---
+
 ## 다음 단계
 
 이 시리즈의 이전 문서들:
-- [04. 전투 시스템](04-combat-system.md) - 근접 공격, 크리티컬, 총기 사격
+- [04. 전투 시스템](04-combat-system.md) - 근접 공격, 크리티컬, 총기 사격, 감전 연동
 - [07. 이펙트와 렌더링](07-effects-and-rendering.md) - 총알 이펙트, 머즐 플래시
-- [08. 오디오](08-audio.md) - 사운드 시스템
+- [08. 오디오](08-audio.md) - 사운드 시스템, 볼륨 조절

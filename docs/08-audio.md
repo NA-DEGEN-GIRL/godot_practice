@@ -230,10 +230,40 @@ sfx.pitch_scale = 1.8   # 원본보다 훨씬 높고 빠르게 → 금속 딸깍
 | `gulp.wav` | 치킨/탄약 픽업 | Python scipy 합성 |
 | `poison_spit.wav` | 적 독 공격 | Python scipy 합성 |
 | `zombie_groan.wav` | 적2 근접 공격 | Python scipy 합성 |
+| `enemy3_attack.wav` | 적3 근접 공격 | Python scipy 합성 |
+| `electrocution.wav` | 적3 감전 반응 | Python scipy 합성 |
+| `earthquake_attack.wav` | 적4 지진 돌진 | Python scipy 합성 |
 
 ---
 
-## 7. 정리
+## 7. 볼륨 조절 (AudioServer)
+
+게임 내에서 Master 버스 볼륨을 실시간으로 제어합니다:
+
+```gdscript
+# 볼륨 값(0.0~1.0)을 dB로 변환하여 설정
+func _on_volume_changed(value: float) -> void:
+    if value <= 0.0:
+        AudioServer.set_bus_mute(0, true)
+    else:
+        AudioServer.set_bus_mute(0, false)
+        AudioServer.set_bus_volume_db(0, linear_to_db(value))
+```
+
+**`linear_to_db()` 함수:**
+
+사람의 청각은 로그 스케일입니다. 볼륨 슬라이더의 선형 값(0~1)을 데시벨(dB)로 변환해야 자연스럽게 들립니다:
+
+```
+1.0 → 0 dB    (원래 볼륨)
+0.5 → -6 dB   (절반 느낌)
+0.25 → -12 dB (1/4 느낌)
+0.0 → -∞ dB   (무음, 별도 mute 처리)
+```
+
+---
+
+## 8. 정리
 
 | 개념 | 설명 |
 |------|------|
@@ -243,3 +273,5 @@ sfx.pitch_scale = 1.8   # 원본보다 훨씬 높고 빠르게 → 금속 딸깍
 | `.play()` / `.stop()` | 재생 / 정지 |
 | `finished` 시그널 | 재생 완료 시 호출 |
 | 오디오 버스 | 사운드 카테고리별 볼륨/이펙트 제어 |
+| `AudioServer` | 전역 오디오 제어 (버스 볼륨, 음소거) |
+| `linear_to_db()` | 선형(0~1) → dB 변환 |

@@ -429,7 +429,40 @@ func _equip_item(index: int) -> void:
 
 ---
 
-## 8. Game Over 화면 (skill_bar.gd)
+## 8. 볼륨 조절 (skill_bar.gd)
+
+화면 우측 상단에 마스터 볼륨 슬라이더:
+
+```gdscript
+func _create_volume_control(parent: Control) -> void:
+    # HBoxContainer: [VOL 라벨] [슬라이더] [100% 라벨]
+    _volume_slider = HSlider.new()
+    _volume_slider.min_value = 0.0
+    _volume_slider.max_value = 1.0
+    _volume_slider.step = 0.05
+    _volume_slider.value = 1.0
+    _volume_slider.value_changed.connect(_on_volume_changed)
+
+func _on_volume_changed(value: float) -> void:
+    if value <= 0.0:
+        AudioServer.set_bus_mute(0, true)    # 음소거
+    else:
+        AudioServer.set_bus_mute(0, false)
+        AudioServer.set_bus_volume_db(0, linear_to_db(value))  # 선형→dB 변환
+    _volume_label.text = "%d%%" % int(value * 100)
+```
+
+**AudioServer API:**
+- `set_bus_volume_db(bus_idx, db)`: 버스 볼륨 설정 (dB 단위)
+- `set_bus_mute(bus_idx, mute)`: 버스 음소거 토글
+- `linear_to_db(linear)`: 0.0~1.0 선형 값을 dB로 변환 (0.5 → -6dB)
+- 버스 인덱스 0 = Master 버스 (모든 사운드에 영향)
+
+**`HSlider`**: Godot의 수평 슬라이더 위젯. `value_changed` 시그널로 값 변경을 실시간 감지합니다.
+
+---
+
+## 9. Game Over 화면 (skill_bar.gd)
 
 플레이어 HP가 0이 되면 나타나는 오버레이:
 
